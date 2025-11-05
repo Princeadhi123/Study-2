@@ -175,6 +175,35 @@ def _save_line_plot(df: pd.DataFrame, x_col: str, y_col: str, title: str, out_pa
     plt.close()
 
 
+def _save_zmean_heatmap(df: pd.DataFrame, feature_cols: list, cluster_col: str, title: str, out_path: Path):
+    mu = df[feature_cols].mean()
+    sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
+    z = (df[feature_cols] - mu) / sd
+    zmean = z.join(df[cluster_col]).groupby(cluster_col)[feature_cols].mean().sort_index()
+    plt.figure(figsize=(1.2 * len(feature_cols), 0.6 * max(6, len(zmean))))
+    sns.heatmap(zmean, cmap="coolwarm", center=0, annot=False, cbar=True)
+    plt.title(title)
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+
+def _save_cluster_profiles(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, label_name: str, profiles_dir: Path, figures_dir: Path):
+    df = feats.copy()
+    df[label_name] = labels
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    counts = df[label_name].value_counts().sort_index().rename_axis(label_name).reset_index(name="count")
+    counts["share"] = counts["count"] / counts["count"].sum()
+    counts.to_csv(profiles_dir / f"{label_name}_counts.csv", index=False)
+    means = df.groupby(label_name)[feature_cols].mean().sort_index()
+    means.to_csv(profiles_dir / f"{label_name}_feature_means.csv")
+    mu = df[feature_cols].mean()
+    sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
+    zmeans = ((means - mu) / sd)
+    zmeans.to_csv(profiles_dir / f"{label_name}_feature_zmeans.csv")
+    _save_zmean_heatmap(df, feature_cols, label_name, f"Z-mean heatmap: {label_name}", figures_dir / f"{label_name}_zmean_heatmap.png")
+
 def _save_line_plot_hue(df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, title: str, out_path: Path):
     plt.figure(figsize=(7.5, 5.0))
     sns.lineplot(data=df, x=x_col, y=y_col, hue=hue_col, marker="o")
@@ -551,6 +580,31 @@ def main():
     _save_line_plot_hue(gm_bic_df, "K", "bic", "covariance_type", "GMM BIC vs K", figures_dir / "gmm_bic_vs_k.png")
     _save_line_plot_hue(gm_bic_df, "K", "aic", "covariance_type", "GMM AIC vs K", figures_dir / "gmm_aic_vs_k.png")
 
+    # Prepare labels for GMM models chosen by best BIC and best AIC
+    try:
+        _bic_k = gm_bic_best.get("k")
+        _bic_cov = gm_bic_best.get("covariance_type")
+        if _bic_k is not None and _bic_cov is not None:
+            _gm_bic_model = GaussianMixture(n_components=int(_bic_k), covariance_type=_bic_cov, random_state=42, n_init=5)
+            _gm_bic_model.fit(Xs)
+            gmm_bic_best_labels = _gm_bic_model.predict(Xs)
+        else:
+            gmm_bic_best_labels = np.full(len(Xs), -1)
+    except Exception:
+        gmm_bic_best_labels = np.full(len(Xs), -1)
+
+    try:
+        _aic_k = gm_aic_best.get("k")
+        _aic_cov = gm_aic_best.get("covariance_type")
+        if _aic_k is not None and _aic_cov is not None:
+            _gm_aic_model = GaussianMixture(n_components=int(_aic_k), covariance_type=_aic_cov, random_state=42, n_init=5)
+            _gm_aic_model.fit(Xs)
+            gmm_aic_best_labels = _gm_aic_model.predict(Xs)
+        else:
+            gmm_aic_best_labels = np.full(len(Xs), -1)
+    except Exception:
+        gmm_aic_best_labels = np.full(len(Xs), -1)
+
     # DBSCAN diagnostics: sweep over eps with noise penalty + k-distance elbow
     db_diag_df, db_labels_sil, db_best, db_labels_comb, db_best_comb = dbscan_grid_diagnostics(
         Xs, eps_values=np.linspace(0.5, 3.0, 11), min_samples=5
@@ -588,6 +642,8 @@ def main():
             "kmeans_label": km_labels,
             "agglomerative_label": ag_labels,
             "gmm_label": gmm_labels,
+            "gmm_bic_best_label": gmm_bic_best_labels,
+            "gmm_aic_best_label": gmm_aic_best_labels,
             "dbscan_label": db_labels,
             "dbscan_combined_label": db_labels_comb,
             "dbscan_selected_label": db_selected_labels,
@@ -618,12 +674,60 @@ def main():
         )
     except Exception:
         pass
+    # Additional GMM plots for models selected by information criteria
+    try:
+        bic_k = gm_bic_best.get("k")
+        bic_cov = gm_bic_best.get("covariance_type")
+        if bic_k is not None and bic_cov is not None:
+            pca_scatter(
+                Xs,
+                gmm_bic_best_labels,
+                f"GMM (best by BIC: k={bic_k}, cov={bic_cov})",
+                figures_dir / "gmm_bic_best_pca.png",
+            )
+    except Exception:
+        pass
+    try:
+        aic_k = gm_aic_best.get("k")
+        aic_cov = gm_aic_best.get("covariance_type")
+        if aic_k is not None and aic_cov is not None:
+            pca_scatter(
+                Xs,
+                gmm_aic_best_labels,
+                f"GMM (best by AIC: k={aic_k}, cov={aic_cov})",
+                figures_dir / "gmm_aic_best_pca.png",
+            )
+    except Exception:
+        pass
     try:
         pca_scatter(Xs, db_labels, f"DBSCAN (best by silhouette, eps={db_best.get('eps')})", figures_dir / "dbscan_pca.png")
     except Exception:
         pass
     try:
         pca_scatter(Xs, db_labels_comb, f"DBSCAN (best by combined, eps={db_best_comb.get('eps')})", figures_dir / "dbscan_combined_pca.png")
+    except Exception:
+        pass
+
+    try:
+        pca_scatter(
+            Xs,
+            db_selected_labels,
+            f"DBSCAN (selected, eps={db_selected.get('eps')}, min_samples={db_selected.get('min_samples')})",
+            figures_dir / "dbscan_selected_pca.png",
+        )
+    except Exception:
+        pass
+
+    # Profiles for interpretation: GMM best-by-BIC
+    try:
+        _save_cluster_profiles(
+            feats,
+            feature_cols,
+            gmm_bic_best_labels,
+            "gmm_bic_best_label",
+            out_dir / "profiles",
+            figures_dir,
+        )
     except Exception:
         pass
 
