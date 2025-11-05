@@ -1,0 +1,48 @@
+Clustering Performance Report
+============================
+
+N students: 541
+Features used: n_items, total_correct, total_incorrect, accuracy, avg_rt, var_rt, rt_cv, longest_correct_streak, longest_incorrect_streak, consecutive_correct_rate, response_variance
+
+KMeans
+  best_k: 2
+  silhouette: 0.3534515915149774
+
+Agglomerative
+  best_k: 2
+  silhouette: 0.31670875056429615
+
+GMM
+  best_k: 2
+  covariance_type: full
+  silhouette: 0.3484486924337826
+
+DBSCAN (core points only)
+  best_eps_by_silhouette: 0.5
+  min_samples: 5
+  n_clusters: 2
+  noise_rate: 0.9685767097966729
+  silhouette_core: 0.6771369809082548
+
+  best_eps_by_combined (silhouette*(1-noise))
+    eps: 1.0
+    n_clusters: 2
+    noise_rate: 0.2532347504621072
+    silhouette_core: 0.2520130550819302
+    combined: 0.18819459196506436
+
+  elbow_eps_estimate (k-distance): 1.950017369733037
+
+DBSCAN auto-selection (threshold on noise rate)
+  noise_rate_threshold: 0.2
+  selected_eps: 2.2
+  selected_min_samples: 8
+  n_clusters: 2
+  noise_rate: 0.014787430683918634
+  silhouette_core: 0.5090142663462106
+  combined: 0.5014872531654904
+
+GMM model selection (information criteria)
+  best_by_BIC: k=7, cov=full, BIC=-14570.513175357546, AIC=-16910.426682328878
+  best_by_AIC: k=9, cov=full, BIC=-14255.765204637628, AIC=-17265.45211910901
+
