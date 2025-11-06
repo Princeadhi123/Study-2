@@ -192,11 +192,10 @@ def _save_cluster_cards(feats: pd.DataFrame, feature_cols: list, labels: np.ndar
         ser = zmean.loc[k].abs().sort_values(ascending=False)
         feat = ser.index[:top_n]
         zvals = zmean.loc[k, feat].sort_values()
-        raw = means.loc[k, zvals.index]
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.barh(zvals.index, zvals.values, color=["#d62728" if v>0 else "#1f77b4" for v in zmean.loc[k, zvals.index].values])
         for i, f in enumerate(zvals.index):
-            ax.text(zvals.values[i], i, f"  {raw[f]:.2f}", va="center")
+            ax.text(zvals.values[i], i, f"  {zvals.values[i]:.2f}", va="center")
         ax.set_xlabel("z-mean")
         ax.set_title(f"Cluster {k}  (n={int(counts.get(k, 0))})")
         plt.tight_layout()
@@ -266,21 +265,6 @@ def _save_effect_size_heatmap(effect_df: pd.DataFrame, out_path: Path, title: st
     plt.figure(figsize=(1.2 * len(order), 0.6 * max(6, len(effect_df))))
     sns.heatmap(effect_df[order], cmap="coolwarm", center=0, annot=False, cbar=True)
     plt.title(title)
-    plt.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150)
-    plt.close()
-
-def _save_effect_size_lollipop(effect_df: pd.DataFrame, cluster: int, out_path: Path, top_n: int = 6):
-    ser = effect_df.loc[cluster].dropna()
-    ser = ser.reindex(ser.abs().sort_values(ascending=False).index)[:top_n].sort_values()
-    plt.figure(figsize=(8, 5))
-    colors = ["#1f77b4" if v < 0 else "#d62728" for v in ser.values]
-    plt.hlines(y=ser.index, xmin=0, xmax=ser.values, color=colors, linewidth=2)
-    plt.scatter(ser.values, ser.index, color=colors, s=60)
-    plt.axvline(0, color="gray", lw=1)
-    plt.xlabel("Cohen's d (cluster vs rest)")
-    plt.title(f"Top distinguishing features – Cluster {cluster}")
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
@@ -1024,16 +1008,7 @@ def main():
         )
     except Exception:
         pass
-    # Effect size visuals (which features most distinguish each cluster)
-    try:
-        eff_df = _compute_effect_sizes(feats, feature_cols, gmm_bic_best_labels, label_name="gmm_bic_best_label")
-        _save_effect_size_heatmap(eff_df, figures_dir / "gmm_bic_effect_sizes_heatmap.png")
-        # Lollipops per cluster (top distinguishing features)
-        eff_dir = figures_dir / "effect_sizes"
-        for k in sorted(eff_df.index.tolist()):
-            _save_effect_size_lollipop(eff_df, k, eff_dir / f"lollipop_cluster_{k}.png", top_n=6)
-    except Exception:
-        pass
+    
     # Accuracy vs RT with covariance ellipses per cluster
     try:
         _save_accuracy_speed_ellipse(
