@@ -221,30 +221,6 @@ def _save_rule_explainers(feats: pd.DataFrame, feature_cols: list, labels: np.nd
         txt = export_text(clf, feature_names=list(feature_cols))
         (out_dir / f"tree_cluster_{k}.txt").write_text(txt, encoding="utf-8")
 
-def _save_gmm_confidence_plots(Xs: np.ndarray, k: int, cov: str, out_dir: Path):
-    out_dir.mkdir(parents=True, exist_ok=True)
-    gm = GaussianMixture(n_components=int(k), covariance_type=cov, random_state=42, n_init=5)
-    gm.fit(Xs)
-    proba = gm.predict_proba(Xs)
-    labels = proba.argmax(axis=1)
-    maxp = proba.max(axis=1)
-    plt.figure(figsize=(7, 4))
-    sns.histplot(maxp, bins=20, kde=False)
-    plt.xlabel("Max membership probability")
-    plt.ylabel("Count")
-    plt.title("GMM assignment confidence (max P)")
-    plt.tight_layout()
-    plt.savefig(out_dir / "gmm_confidence_hist.png", dpi=150)
-    plt.close()
-    dfv = pd.DataFrame({"cluster": labels, "prob": maxp})
-    plt.figure(figsize=(8, 5))
-    sns.violinplot(data=dfv, x="cluster", y="prob", inner="quartile", palette="tab10")
-    plt.ylim(0, 1.0)
-    plt.title("Max membership probability by cluster")
-    plt.tight_layout()
-    plt.savefig(out_dir / "gmm_confidence_violin.png", dpi=150)
-    plt.close()
-
 def _save_ridgeline_plots(feats: pd.DataFrame, labels: np.ndarray, out_dir: Path, features=None, label_name: str = "cluster"):
     df = feats.copy()
     df[label_name] = labels
@@ -1079,7 +1055,7 @@ def main():
             gmm_bic_best_labels,
             figures_dir / "cluster_cards",
             label_name="gmm_bic_best_label",
-            top_n=5,
+            top_n=6,
         )
     except Exception:
         pass
@@ -1092,17 +1068,6 @@ def main():
             gmm_bic_best_labels,
             figures_dir / "rule_explainers",
             label_name="gmm_bic_best_label",
-        )
-    except Exception:
-        pass
-
-    # GMM confidence plots (max membership probability)
-    try:
-        _save_gmm_confidence_plots(
-            Xs,
-            gm_bic_best.get("k"),
-            gm_bic_best.get("covariance_type"),
-            figures_dir / "gmm_confidence",
         )
     except Exception:
         pass

@@ -1,0 +1,10 @@
+|--- response_variance <= 0.19
+|   |--- class: 0
+|--- response_variance >  0.19
+|   |--- accuracy <= 0.61
+|   |   |--- class: 0
+|   |--- accuracy >  0.61
+|   |   |--- var_rt <= 594.77
+|   |   |   |--- class: 1
+|   |   |--- var_rt >  594.77
+|   |   |   |--- class: 0
