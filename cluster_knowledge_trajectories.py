@@ -15,6 +15,7 @@ from sklearn.neighbors import NearestNeighbors
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+from pandas.plotting import parallel_coordinates
 
 warnings.filterwarnings("ignore")
 
@@ -174,8 +175,84 @@ def _save_line_plot(df: pd.DataFrame, x_col: str, y_col: str, title: str, out_pa
     plt.savefig(out_path, dpi=150)
     plt.close()
 
+def _save_radar_all_clusters(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_path: Path, label_name: str = "cluster"):
+    df = feats.copy()
+    df[label_name] = labels
+    # Drop constant features (e.g., n_items) from visualization
+    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
+    mu = df[feature_cols].mean()
+    sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
+    z = (df[feature_cols] - mu) / sd
+    zmean = z.join(df[label_name]).groupby(label_name)[feature_cols].mean().sort_index()
+    cats = feature_cols
+    N = len(cats)
+    angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+    angles += angles[:1]
+    plt.figure(figsize=(9, 7))
+    ax = plt.subplot(111, polar=True)
+    palette = sns.color_palette("tab10", n_colors=len(zmean))
+    for i, k in enumerate(zmean.index.tolist()):
+        vals = zmean.loc[k, :].to_numpy().astype(float)
+        vals = np.clip(vals, -3.0, 3.0)
+        vals = vals.tolist() + [vals[0]]
+        ax.plot(angles, vals, color=palette[i], linewidth=2, label=str(k))
+        ax.fill(angles, vals, color=palette[i], alpha=0.08)
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(cats)
+    ax.set_yticks([-3, -1.5, 0, 1.5, 3])
+    ax.set_ylim(-3, 3)
+    ax.set_title("Cluster z-mean radar (GMM BIC)")
+    ax.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+def _save_feature_boxplots(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, label_name: str, out_dir: Path):
+    df = feats.copy()
+    df[label_name] = labels
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Drop constant features (e.g., n_items) from visualization
+    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
+    for col in feature_cols:
+        plt.figure(figsize=(8, 5))
+        sns.boxplot(data=df, x=label_name, y=col, showfliers=False)
+        sns.stripplot(data=df, x=label_name, y=col, size=2, color="black", alpha=0.2)
+        plt.title(f"{col} by {label_name}")
+        plt.tight_layout()
+        plt.savefig(out_dir / f"{col}_by_{label_name}.png", dpi=150)
+        plt.close()
+
+def _save_parallel_coordinates(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_path: Path, label_name: str = "cluster"):
+    df = feats.copy()
+    df[label_name] = labels
+    mu = df[feature_cols].mean()
+    sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
+    z = (df[feature_cols] - mu) / sd
+    plot_df = z.copy()
+    plot_df[label_name] = df[label_name].astype(str)
+    plt.figure(figsize=(12, 6))
+    ax = plt.gca()
+    parallel_coordinates(plot_df, class_column=label_name, cols=feature_cols, ax=ax, color=sns.color_palette("tab10"))
+    for ln in ax.lines:
+        ln.set_alpha(0.12)
+    # Overlay cluster medians for clarity
+    med = plot_df.groupby(label_name)[feature_cols].median().sort_index()
+    palette = sns.color_palette("tab10", n_colors=len(med))
+    angles = np.arange(len(feature_cols))
+    for i, (k, row) in enumerate(med.iterrows()):
+        ax.plot(angles, row.values, color=palette[i], linewidth=2.5)
+    ax.set_title("Parallel coordinates (z-scored), with cluster medians")
+    ax.legend(loc="upper right", bbox_to_anchor=(1.15, 1))
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
 
 def _save_zmean_heatmap(df: pd.DataFrame, feature_cols: list, cluster_col: str, title: str, out_path: Path):
+    # Drop constant features (e.g., n_items) from visualization
+    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
     mu = df[feature_cols].mean()
     sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
     z = (df[feature_cols] - mu) / sd
@@ -203,6 +280,47 @@ def _save_cluster_profiles(feats: pd.DataFrame, feature_cols: list, labels: np.n
     zmeans = ((means - mu) / sd)
     zmeans.to_csv(profiles_dir / f"{label_name}_feature_zmeans.csv")
     _save_zmean_heatmap(df, feature_cols, label_name, f"Z-mean heatmap: {label_name}", figures_dir / f"{label_name}_zmean_heatmap.png")
+
+def _save_gmm_bic_composite(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, X: np.ndarray, out_path: Path):
+    df = feats.copy()
+    df["cluster"] = labels
+    # Drop constant features (e.g., n_items) from visualization
+    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
+    # Z-mean profiles
+    mu = df[feature_cols].mean()
+    sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
+    z = (df[feature_cols] - mu) / sd
+    zmean = z.join(df["cluster"]).groupby("cluster")[feature_cols].mean().sort_index()
+    # Counts
+    counts = df["cluster"].value_counts().sort_index()
+    # PCA projection
+    if X.shape[1] > 2:
+        pca = PCA(n_components=2, random_state=42)
+        X2 = pca.fit_transform(X)
+    else:
+        X2 = X
+    # Figure layout
+    plt.figure(figsize=(14, 8))
+    gs = plt.GridSpec(2, 2, width_ratios=[1.1, 1.6], height_ratios=[2.0, 1.0])
+    ax_heat = plt.subplot(gs[0, 0])
+    sns.heatmap(zmean, cmap="coolwarm", center=0, annot=False, cbar=True, ax=ax_heat)
+    ax_heat.set_title("GMM (BIC) z-mean feature profiles")
+    ax_bar = plt.subplot(gs[1, 0])
+    ax_bar.bar(counts.index.astype(str), counts.values, color="#69b3a2")
+    ax_bar.set_title("Cluster sizes")
+    ax_bar.set_xlabel("Cluster")
+    ax_bar.set_ylabel("Count")
+    ax_sc = plt.subplot(gs[:, 1])
+    sc = ax_sc.scatter(X2[:, 0], X2[:, 1], c=labels, cmap="tab10", s=25)
+    ax_sc.set_title("PCA scatter by cluster (GMM BIC)")
+    ax_sc.set_xlabel("PC1")
+    ax_sc.set_ylabel("PC2")
+    handles, _ = sc.legend_elements(prop="colors", alpha=0.6)
+    ax_sc.legend(handles, [str(i) for i in sorted(counts.index)], title="Cluster", bbox_to_anchor=(1.02, 1), loc="upper left")
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
 
 def _save_line_plot_hue(df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, title: str, out_path: Path):
     plt.figure(figsize=(7.5, 5.0))
@@ -727,6 +845,40 @@ def main():
             "gmm_bic_best_label",
             out_dir / "profiles",
             figures_dir,
+        )
+    except Exception:
+        pass
+
+    # Composite summary figure: heatmap + sizes + PCA scatter
+    try:
+        _save_gmm_bic_composite(
+            feats,
+            feature_cols,
+            gmm_bic_best_labels,
+            Xs,
+            figures_dir / "gmm_bic_cluster_summary.png",
+        )
+    except Exception:
+        pass
+
+    # Additional interpretability visuals for GMM BIC clusters
+    try:
+        _save_radar_all_clusters(
+            feats,
+            feature_cols,
+            gmm_bic_best_labels,
+            figures_dir / "gmm_bic_radar_all.png",
+            label_name="gmm_bic_best_label",
+        )
+    except Exception:
+        pass
+    try:
+        _save_feature_boxplots(
+            feats,
+            feature_cols,
+            gmm_bic_best_labels,
+            label_name="gmm_bic_best_label",
+            out_dir=figures_dir / "boxplots",
         )
     except Exception:
         pass
