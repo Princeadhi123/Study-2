@@ -1071,6 +1071,54 @@ def main():
     except Exception:
         pass
 
+    # Cluster cards (top 5 features per cluster with raw means)
+    try:
+        _save_cluster_cards(
+            feats,
+            feature_cols,
+            gmm_bic_best_labels,
+            figures_dir / "cluster_cards",
+            label_name="gmm_bic_best_label",
+            top_n=5,
+        )
+    except Exception:
+        pass
+
+    # Rule-based explainers (tiny decision trees)
+    try:
+        _save_rule_explainers(
+            feats,
+            feature_cols,
+            gmm_bic_best_labels,
+            figures_dir / "rule_explainers",
+            label_name="gmm_bic_best_label",
+        )
+    except Exception:
+        pass
+
+    # GMM confidence plots (max membership probability)
+    try:
+        _save_gmm_confidence_plots(
+            Xs,
+            gm_bic_best.get("k"),
+            gm_bic_best.get("covariance_type"),
+            figures_dir / "gmm_confidence",
+        )
+    except Exception:
+        pass
+
+    # Ridgeline plots for selected features
+    try:
+        _save_ridgeline_plots(
+            feats,
+            gmm_bic_best_labels,
+            figures_dir / "ridgelines",
+            features=["accuracy", "avg_rt", "rt_cv"],
+            label_name="gmm_bic_best_label",
+        )
+    except Exception:
+        pass
+
     summary = {
         "n_students": int(len(feats)),
         "feature_cols": feature_cols,
