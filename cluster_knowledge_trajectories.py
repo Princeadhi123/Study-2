@@ -16,6 +16,8 @@ from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pandas.plotting import parallel_coordinates
+from matplotlib.patches import Ellipse
+from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
 
 warnings.filterwarnings("ignore")
 
@@ -170,6 +172,170 @@ def _save_line_plot(df: pd.DataFrame, x_col: str, y_col: str, title: str, out_pa
     plt.figure(figsize=(7.5, 5.0))
     sns.lineplot(data=df, x=x_col, y=y_col, marker="o")
     plt.title(title)
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+def _save_cluster_cards(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_dir: Path, label_name: str = "cluster", top_n: int = 5):
+    df = feats.copy()
+    df[label_name] = labels
+    out_dir.mkdir(parents=True, exist_ok=True)
+    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
+    mu = df[feature_cols].mean()
+    sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
+    z = (df[feature_cols] - mu) / sd
+    zmean = z.join(df[label_name]).groupby(label_name)[feature_cols].mean().sort_index()
+    means = df.groupby(label_name)[feature_cols].mean().sort_index()
+    counts = df[label_name].value_counts().sort_index()
+    for k in zmean.index:
+        ser = zmean.loc[k].abs().sort_values(ascending=False)
+        feat = ser.index[:top_n]
+        zvals = zmean.loc[k, feat].sort_values()
+        raw = means.loc[k, zvals.index]
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.barh(zvals.index, zvals.values, color=["#d62728" if v>0 else "#1f77b4" for v in zmean.loc[k, zvals.index].values])
+        for i, f in enumerate(zvals.index):
+            ax.text(zvals.values[i], i, f"  {raw[f]:.2f}", va="center")
+        ax.set_xlabel("z-mean")
+        ax.set_title(f"Cluster {k}  (n={int(counts.get(k, 0))})")
+        plt.tight_layout()
+        plt.savefig(out_dir / f"cluster_card_{k}.png", dpi=150)
+        plt.close()
+
+def _save_rule_explainers(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_dir: Path, label_name: str = "cluster"):
+    df = feats.copy()
+    df[label_name] = labels
+    out_dir.mkdir(parents=True, exist_ok=True)
+    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
+    X = df[feature_cols].to_numpy()
+    for k in sorted(df[label_name].unique()):
+        y = (df[label_name].to_numpy() == k).astype(int)
+        clf = DecisionTreeClassifier(max_depth=3, min_samples_leaf=10, random_state=42)
+        clf.fit(X, y)
+        fig, ax = plt.subplots(figsize=(10, 6))
+        plot_tree(clf, feature_names=feature_cols, class_names=["rest", f"cluster {k}"], filled=True, impurity=False, proportion=True, rounded=True, ax=ax)
+        plt.tight_layout()
+        plt.savefig(out_dir / f"tree_cluster_{k}.png", dpi=150)
+        plt.close()
+        txt = export_text(clf, feature_names=list(feature_cols))
+        (out_dir / f"tree_cluster_{k}.txt").write_text(txt, encoding="utf-8")
+
+def _save_gmm_confidence_plots(Xs: np.ndarray, k: int, cov: str, out_dir: Path):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    gm = GaussianMixture(n_components=int(k), covariance_type=cov, random_state=42, n_init=5)
+    gm.fit(Xs)
+    proba = gm.predict_proba(Xs)
+    labels = proba.argmax(axis=1)
+    maxp = proba.max(axis=1)
+    plt.figure(figsize=(7, 4))
+    sns.histplot(maxp, bins=20, kde=False)
+    plt.xlabel("Max membership probability")
+    plt.ylabel("Count")
+    plt.title("GMM assignment confidence (max P)")
+    plt.tight_layout()
+    plt.savefig(out_dir / "gmm_confidence_hist.png", dpi=150)
+    plt.close()
+    dfv = pd.DataFrame({"cluster": labels, "prob": maxp})
+    plt.figure(figsize=(8, 5))
+    sns.violinplot(data=dfv, x="cluster", y="prob", inner="quartile", palette="tab10")
+    plt.ylim(0, 1.0)
+    plt.title("Max membership probability by cluster")
+    plt.tight_layout()
+    plt.savefig(out_dir / "gmm_confidence_violin.png", dpi=150)
+    plt.close()
+
+def _save_ridgeline_plots(feats: pd.DataFrame, labels: np.ndarray, out_dir: Path, features=None, label_name: str = "cluster"):
+    df = feats.copy()
+    df[label_name] = labels
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if features is None:
+        features = ["accuracy", "avg_rt", "rt_cv"]
+    for col in features:
+        d = pd.DataFrame({col: df[col], label_name: df[label_name]})
+        g = sns.FacetGrid(d, row=label_name, hue=label_name, aspect=6, height=1.0, palette="tab10", sharex=True, sharey=False)
+        g.map(sns.kdeplot, col, fill=True, alpha=0.8, linewidth=1)
+        g.map(plt.axhline, y=0, lw=1, clip_on=False)
+        g.set(yticks=[], ylabel="")
+        g.set_titles(row_template="{row_name}")
+        g.fig.subplots_adjust(hspace=-0.5)
+        g.fig.suptitle(f"Ridgeline: {col}", y=1.02)
+        plt.tight_layout()
+        g.savefig(out_dir / f"ridgeline_{col}.png", dpi=150)
+        plt.close(g.fig)
+def _compute_effect_sizes(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, label_name: str = "cluster") -> pd.DataFrame:
+    df = feats.copy()
+    df[label_name] = labels
+    # Drop constant features
+    feature_cols = [c for c in feature_cols if df[c].nunique() > 1]
+    effects = {}
+    for k in sorted(df[label_name].unique()):
+        g = df[df[label_name] == k][feature_cols]
+        r = df[df[label_name] != k][feature_cols]
+        n1, n2 = len(g), len(r)
+        if n1 < 2 or n2 < 2:
+            es = pd.Series({c: np.nan for c in feature_cols}, name=k)
+        else:
+            mu1, mu2 = g.mean(), r.mean()
+            s1, s2 = g.std(ddof=1), r.std(ddof=1)
+            pooled = np.sqrt(((n1 - 1) * (s1 ** 2) + (n2 - 1) * (s2 ** 2)) / max(n1 + n2 - 2, 1))
+            es = (mu1 - mu2) / pooled.replace(0, np.nan)
+            es.name = k
+        effects[k] = es
+    return pd.DataFrame(effects).T
+
+def _save_effect_size_heatmap(effect_df: pd.DataFrame, out_path: Path, title: str = "Cohen's d: cluster vs rest"):
+    # Order columns by overall discriminativeness
+    order = effect_df.abs().mean(axis=0).sort_values(ascending=False).index
+    plt.figure(figsize=(1.2 * len(order), 0.6 * max(6, len(effect_df))))
+    sns.heatmap(effect_df[order], cmap="coolwarm", center=0, annot=False, cbar=True)
+    plt.title(title)
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+def _save_effect_size_lollipop(effect_df: pd.DataFrame, cluster: int, out_path: Path, top_n: int = 6):
+    ser = effect_df.loc[cluster].dropna()
+    ser = ser.reindex(ser.abs().sort_values(ascending=False).index)[:top_n].sort_values()
+    plt.figure(figsize=(8, 5))
+    colors = ["#1f77b4" if v < 0 else "#d62728" for v in ser.values]
+    plt.hlines(y=ser.index, xmin=0, xmax=ser.values, color=colors, linewidth=2)
+    plt.scatter(ser.values, ser.index, color=colors, s=60)
+    plt.axvline(0, color="gray", lw=1)
+    plt.xlabel("Cohen's d (cluster vs rest)")
+    plt.title(f"Top distinguishing features – Cluster {cluster}")
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_path: Path, label_name: str = "cluster", x: str = "accuracy", y: str = "avg_rt"):
+    df = feats.copy()
+    df[label_name] = labels
+    plt.figure(figsize=(8, 6))
+    ax = plt.gca()
+    uniq = sorted(df[label_name].unique())
+    palette = sns.color_palette("tab10", n_colors=len(uniq))
+    for i, k in enumerate(uniq):
+        sub = df[df[label_name] == k]
+        ax.scatter(sub[x], sub[y], s=10, alpha=0.15, color=palette[i])
+        mx, my = sub[x].mean(), sub[y].mean()
+        if len(sub) > 2:
+            cov = np.cov(sub[x], sub[y])
+            if np.isfinite(cov).all():
+                vals, vecs = np.linalg.eigh(cov)
+                order = vals.argsort()[::-1]
+                vals, vecs = vals[order], vecs[:, order]
+                theta = np.degrees(np.arctan2(vecs[1, 0], vecs[0, 0]))
+                width, height = 2 * 1.5 * np.sqrt(np.maximum(vals, 1e-12))
+                e = Ellipse((mx, my), width, height, angle=theta, edgecolor=palette[i], facecolor='none', lw=2)
+                ax.add_patch(e)
+        ax.scatter([mx], [my], color=palette[i], s=60, label=str(k), edgecolor='black', linewidth=0.5)
+    ax.set_xlabel("Accuracy")
+    ax.set_ylabel("Avg RT (s)")
+    ax.set_title("Accuracy vs Avg RT with cluster ellipses (GMM BIC)")
+    ax.legend(title="Cluster", bbox_to_anchor=(1.02, 1), loc="upper left")
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
@@ -879,6 +1045,28 @@ def main():
             gmm_bic_best_labels,
             label_name="gmm_bic_best_label",
             out_dir=figures_dir / "boxplots",
+        )
+    except Exception:
+        pass
+    # Effect size visuals (which features most distinguish each cluster)
+    try:
+        eff_df = _compute_effect_sizes(feats, feature_cols, gmm_bic_best_labels, label_name="gmm_bic_best_label")
+        _save_effect_size_heatmap(eff_df, figures_dir / "gmm_bic_effect_sizes_heatmap.png")
+        # Lollipops per cluster (top distinguishing features)
+        eff_dir = figures_dir / "effect_sizes"
+        for k in sorted(eff_df.index.tolist()):
+            _save_effect_size_lollipop(eff_df, k, eff_dir / f"lollipop_cluster_{k}.png", top_n=6)
+    except Exception:
+        pass
+    # Accuracy vs RT with covariance ellipses per cluster
+    try:
+        _save_accuracy_speed_ellipse(
+            feats,
+            gmm_bic_best_labels,
+            figures_dir / "gmm_bic_accuracy_vs_rt_ellipses.png",
+            label_name="gmm_bic_best_label",
+            x="accuracy",
+            y="avg_rt",
         )
     except Exception:
         pass
