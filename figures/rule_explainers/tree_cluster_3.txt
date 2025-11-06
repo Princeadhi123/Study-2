@@ -1,7 +1,0 @@
-|--- accuracy <= 0.40
-|   |--- longest_incorrect_streak <= 11.50
-|   |   |--- class: 1
-|   |--- longest_incorrect_streak >  11.50
-|   |   |--- class: 1
-|--- accuracy >  0.40
-|   |--- class: 0

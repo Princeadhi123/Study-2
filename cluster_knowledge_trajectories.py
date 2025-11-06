@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pandas.plotting import parallel_coordinates
 from matplotlib.patches import Ellipse
-from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
 
 warnings.filterwarnings("ignore")
 
@@ -202,23 +201,7 @@ def _save_cluster_cards(feats: pd.DataFrame, feature_cols: list, labels: np.ndar
         plt.savefig(out_dir / f"cluster_card_{k}.png", dpi=150)
         plt.close()
 
-def _save_rule_explainers(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_dir: Path, label_name: str = "cluster"):
-    df = feats.copy()
-    df[label_name] = labels
-    out_dir.mkdir(parents=True, exist_ok=True)
-    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
-    X = df[feature_cols].to_numpy()
-    for k in sorted(df[label_name].unique()):
-        y = (df[label_name].to_numpy() == k).astype(int)
-        clf = DecisionTreeClassifier(max_depth=3, min_samples_leaf=10, random_state=42)
-        clf.fit(X, y)
-        fig, ax = plt.subplots(figsize=(10, 6))
-        plot_tree(clf, feature_names=feature_cols, class_names=["rest", f"cluster {k}"], filled=True, impurity=False, proportion=True, rounded=True, ax=ax)
-        plt.tight_layout()
-        plt.savefig(out_dir / f"tree_cluster_{k}.png", dpi=150)
-        plt.close()
-        txt = export_text(clf, feature_names=list(feature_cols))
-        (out_dir / f"tree_cluster_{k}.txt").write_text(txt, encoding="utf-8")
+ 
 
 def _save_ridgeline_plots(feats: pd.DataFrame, labels: np.ndarray, out_dir: Path, features=None, label_name: str = "cluster"):
     df = feats.copy()
@@ -697,7 +680,19 @@ def pca_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path):
     else:
         X2 = X
     plt.figure(figsize=(7.0, 6.0))
-    sns.scatterplot(x=X2[:, 0], y=X2[:, 1], hue=labels.astype(str), palette="tab10", s=30, linewidth=0)
+    # Ensure consistent colors and ordered legend (0..K-1)
+    lbls_num = labels.astype(int)
+    levels = [str(i) for i in sorted(np.unique(lbls_num))]
+    palette = sns.color_palette("tab10", n_colors=len(levels))
+    sns.scatterplot(
+        x=X2[:, 0],
+        y=X2[:, 1],
+        hue=lbls_num.astype(str),
+        hue_order=levels,
+        palette=palette,
+        s=30,
+        linewidth=0,
+    )
     plt.title(title)
     plt.xlabel("PC1")
     plt.ylabel("PC2")
@@ -1035,17 +1030,7 @@ def main():
     except Exception:
         pass
 
-    # Rule-based explainers (tiny decision trees)
-    try:
-        _save_rule_explainers(
-            feats,
-            feature_cols,
-            gmm_bic_best_labels,
-            figures_dir / "rule_explainers",
-            label_name="gmm_bic_best_label",
-        )
-    except Exception:
-        pass
+ 
 
     # Ridgeline plots for selected features
     try:
