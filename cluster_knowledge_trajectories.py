@@ -366,11 +366,53 @@ def _save_zmean_heatmap(df: pd.DataFrame, feature_cols: list, cluster_col: str, 
     sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
     z = (df[feature_cols] - mu) / sd
     zmean = z.join(df[cluster_col]).groupby(cluster_col)[feature_cols].mean().sort_index()
-    plt.figure(figsize=(1.2 * len(feature_cols), 0.6 * max(6, len(zmean))))
-    sns.heatmap(zmean, cmap="coolwarm", center=0, annot=False, cbar=True)
+    # Order features by overall discriminativeness across clusters (avg |z|)
+    col_order = zmean.abs().mean(axis=0).sort_values(ascending=False).index.tolist()
+    zmean = zmean[col_order]
+    vmax = float(np.nanmax(np.abs(zmean.values))) if zmean.size else 0.0
+    vmax = max(1.0, min(3.0, vmax))
+    vmin = -vmax
+    fig_w = max(10.0, 1.3 * len(feature_cols))
+    fig_h = max(8.0, 1.2 * max(6, len(zmean)))
+    plt.figure(figsize=(fig_w, fig_h))
+    ax = sns.heatmap(
+        zmean,
+        cmap="RdBu_r",
+        center=0,
+        vmin=vmin,
+        vmax=vmax,
+        annot=True,
+        fmt=".2f",
+        cbar=True,
+        cbar_kws={"label": "z-mean"},
+        annot_kws={"size": 11},
+        linewidths=0.6,
+        linecolor="#f0f0f0",
+    )
+    ax.set_xlabel("Feature")
+    ax.set_ylabel("Cluster")
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=30, ha="right")
+    # Show cluster counts in y tick labels
+    counts = df[cluster_col].value_counts().sort_index()
+    ylabels = []
+    for i, k in enumerate(zmean.index.tolist()):
+        n = int(counts.get(k, 0))
+        ylabels.append(f"{k} (n={n})")
+    ax.set_yticklabels(ylabels, rotation=0)
     plt.title(title)
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    # Improve annotation contrast based on background value
+    for text in ax.texts:
+        try:
+            val = float(text.get_text())
+        except Exception:
+            continue
+        if abs(val) > (0.6 * vmax):
+            text.set_color("white")
+        else:
+            text.set_color("black")
     plt.savefig(out_path, dpi=150)
     plt.close()
 
@@ -984,12 +1026,12 @@ def main():
 
     # Additional interpretability visuals for GMM BIC clusters
     try:
-        _save_radar_all_clusters(
+        _save_zmean_heatmap(
             feats,
             feature_cols,
-            gmm_bic_best_labels,
-            figures_dir / "gmm_bic_radar_all.png",
-            label_name="gmm_bic_best_label",
+            "gmm_bic_best_label",
+            "Z-mean of technical features by cluster (GMM BIC)",
+            figures_dir / "gmm_bic_feature_zmean_by_cluster.png",
         )
     except Exception:
         pass
