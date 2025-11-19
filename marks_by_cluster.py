@@ -273,30 +273,121 @@ def run(marks_path: Path):
         out_figs=out_figs,
     )
 
-    if derived_path.exists():
+    # Dropout risk assessment (unsupervised risk score)
+    if total_col and derived_path.exists():
         dfd = pd.read_csv(derived_path)
-        id_derived = "IDCode" if "IDCode" in dfd.columns else _detect_id_col(dfd)
-        cols_ok = {"accuracy", "avg_rt"}.issubset(set(dfd.columns))
-        if cols_ok:
-            dfm = dfd[[id_derived, "accuracy", "avg_rt"]].merge(
-                dfa[[id_excel, cluster_col] + ([total_col] if total_col else [])].rename(columns={id_excel: id_derived}),
-                on=id_derived,
-                how="inner",
-            )
-            plt.figure(figsize=(8, 6))
-            if total_col:
-                sc = plt.scatter(dfm["accuracy"], dfm["avg_rt"], c=dfm[total_col], cmap="viridis", s=16, alpha=0.5)
-                cbar = plt.colorbar(sc)
-                cbar.set_label(total_col)
-            else:
-                plt.scatter(dfm["accuracy"], dfm["avg_rt"], s=16, alpha=0.5)
-            plt.xlabel("Accuracy")
-            plt.ylabel("Avg RT (s)")
-            plt.title("Accuracy vs Avg RT colored by total marks")
-            plt.tight_layout()
-            (out_figs / "overlays").mkdir(parents=True, exist_ok=True)
-            plt.savefig(out_figs / "overlays" / "acc_rt_colored_by_total.png", dpi=150)
-            plt.close()
+        _compute_dropout_risk(
+            dfa=dfa,
+            dfd=dfd,
+            id_col=id_excel,
+            cluster_col=cluster_col,
+            total_col=total_col,
+            out_profiles=out_profiles,
+            out_figs=out_figs,
+        )
+
+def _compute_dropout_risk(
+    dfa: pd.DataFrame,
+    dfd: pd.DataFrame,
+    id_col: str,
+    cluster_col: str,
+    total_col: str,
+    out_profiles: Path,
+    out_figs: Path,
+):
+    # Join marks+clusters with derived features
+    id_derived = "IDCode" if "IDCode" in dfd.columns else _detect_id_col(dfd)
+    candidate = [
+        "accuracy",
+        "avg_rt",
+        "var_rt",
+        "rt_cv",
+        "longest_correct_streak",
+        "longest_incorrect_streak",
+        "consecutive_correct_rate",
+        "response_variance",
+        "total_correct",
+        "total_incorrect",
+    ]
+    feat_cols = [c for c in candidate if c in dfd.columns]
+    if not feat_cols:
+        return
+    dfm = dfa[[id_col, cluster_col, total_col]].merge(
+        dfd[[id_derived] + feat_cols].rename(columns={id_derived: id_col}), on=id_col, how="inner"
+    )
+
+    # Standardize features and TOTAL
+    zfeat = _zmean(dfm[feat_cols])
+    ztot = _zmean(dfm[[total_col]])[total_col]
+
+    # Orient weights toward low TOTAL = high risk
+    corr = dfm[feat_cols].corrwith(dfm[total_col], method="pearson").fillna(0.0)
+    weights = -corr  # positive weight raises risk when feature pattern predicts low TOTAL
+    denom = float(weights.abs().sum()) or 1.0
+    risk_feat = (zfeat * weights).sum(axis=1) / denom
+
+    # Cluster offset from mean z(TOTAL) by cluster
+    ztot_by_cluster = pd.Series(ztot).groupby(dfm[cluster_col]).mean()
+    cluster_component = -dfm[cluster_col].map(ztot_by_cluster).fillna(0.0)
+
+    # Combine: feature-driven + individual low TOTAL + cluster context
+    risk_raw = 0.6 * risk_feat + 0.3 * (-ztot) + 0.1 * cluster_component
+    risk = _zmean(pd.DataFrame({"risk": risk_raw}))["risk"]
+
+    # Discrete levels by quantiles
+    q_high = float(risk.quantile(0.80))
+    q_med = float(risk.quantile(0.50))
+    def _bucket(x: float) -> str:
+        if x >= q_high:
+            return "high"
+        if x >= q_med:
+            return "medium"
+        return "low"
+    levels = risk.apply(_bucket)
+
+    # Save outputs
+    out_profiles.mkdir(parents=True, exist_ok=True)
+    out_figs_risk = out_figs / "risk"
+    out_figs_risk.mkdir(parents=True, exist_ok=True)
+
+    weights.to_frame("weight").sort_values("weight").to_csv(out_profiles / "risk_feature_weights.csv")
+    res = dfm[[id_col, cluster_col, total_col]].copy()
+    res["risk_score_z"] = risk.values
+    res["risk_level"] = levels.values
+    res.to_csv(out_profiles / "risk_assessment.csv", index=False)
+
+    # Plots: histogram, risk by cluster, accuracy-RT colored by risk (if available)
+    plt.figure(figsize=(8, 5))
+    sns.histplot(risk, bins=30, kde=True, color="#d62728", alpha=0.6)
+    plt.axvline(q_med, color="#ff7f0e", linestyle="--", label=f"median {q_med:.2f}")
+    plt.axvline(q_high, color="#2ca02c", linestyle="--", label=f"80th {q_high:.2f}")
+    plt.title("Dropout risk score distribution (z)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_figs_risk / "risk_hist.png", dpi=150)
+    plt.close()
+
+    plt.figure(figsize=(8, 5))
+    sns.barplot(x=cluster_col, y="risk_score_z", data=res, estimator=np.mean, errorbar=None, palette="RdYlGn_r")
+    plt.title("Mean risk score by cluster")
+    plt.tight_layout()
+    plt.savefig(out_figs_risk / "risk_by_cluster.png", dpi=150)
+    plt.close()
+
+    if {"accuracy", "avg_rt"}.issubset(set(dfm.columns)):
+        cmap = sns.color_palette("RdYlGn_r", as_cmap=True)
+        plt.figure(figsize=(8, 6))
+        sc = plt.scatter(dfm["accuracy"], dfm["avg_rt"], c=risk, cmap=cmap, s=18, alpha=0.7)
+        cbar = plt.colorbar(sc)
+        cbar.set_label("risk score (z)")
+        plt.xlabel("Accuracy")
+        plt.ylabel("Avg RT (s)")
+        plt.title("Accuracy vs Avg RT colored by dropout risk")
+        plt.tight_layout()
+        plt.savefig(out_figs_risk / "acc_rt_colored_by_risk.png", dpi=150)
+        plt.close()
+
+    # end run()
 
 
 if __name__ == "__main__":
