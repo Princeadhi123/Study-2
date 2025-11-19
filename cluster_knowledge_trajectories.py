@@ -8,6 +8,7 @@ from typing import Dict, Tuple
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN, Birch
 from sklearn.metrics import silhouette_score
@@ -910,6 +911,45 @@ def pca_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path):
     plt.close()
 
 
+def lda_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path):
+    lbls_num = labels.astype(int)
+    uniq = np.unique(lbls_num)
+    # LDA requires at least 2 classes
+    if len(uniq) < 2:
+        return
+    n_components = min(2, len(uniq) - 1)
+    lda = LDA(n_components=n_components)
+    try:
+        X_lda = lda.fit_transform(X, lbls_num)
+    except Exception:
+        # In case of numerical issues or singular covariance, skip plot
+        return
+    if n_components == 1:
+        X2 = np.column_stack([X_lda[:, 0], np.zeros_like(X_lda[:, 0])])
+    else:
+        X2 = X_lda
+    plt.figure(figsize=(7.0, 6.0))
+    levels = [str(i) for i in sorted(uniq)]
+    palette = sns.color_palette("husl", n_colors=len(levels))
+    sns.scatterplot(
+        x=X2[:, 0],
+        y=X2[:, 1],
+        hue=lbls_num.astype(str),
+        hue_order=levels,
+        palette=palette,
+        s=30,
+        linewidth=0,
+    )
+    plt.title(title)
+    plt.xlabel("LD1")
+    plt.ylabel("LD2")
+    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+
 def write_report(report_path: Path, summary: Dict):
     lines = []
     lines.append("Clustering Performance Report\n")
@@ -1190,6 +1230,12 @@ def main():
                 gmm_bic_best_labels,
                 f"GMM (best by BIC: k={bic_k}, cov={bic_cov})",
                 figures_dir / "gmm" / "gmm_bic_best_pca.png",
+            )
+            lda_scatter(
+                Xs,
+                gmm_bic_best_labels,
+                f"LDA (GMM best by BIC: k={bic_k}, cov={bic_cov})",
+                figures_dir / "gmm" / "gmm_bic_best_lda.png",
             )
     except Exception:
         pass
