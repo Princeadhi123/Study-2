@@ -236,6 +236,54 @@ def tsne_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path, 
     plt.close()
 
 
+def umap_scatter(
+    X: np.ndarray,
+    labels: np.ndarray,
+    title: str,
+    out_path: Path,
+    n_neighbors: int = 15,
+    min_dist: float = 0.1,
+    metric: str = "euclidean",
+):
+    try:
+        from umap import UMAP
+    except ImportError:
+        print("UMAP is not installed; skipping UMAP scatter.")
+        return
+    n_samples = X.shape[0]
+    if n_samples < 2:
+        return
+    umap_model = UMAP(
+        n_components=2,
+        random_state=42,
+        n_neighbors=n_neighbors,
+        min_dist=min_dist,
+        metric=metric,
+    )
+    X2 = umap_model.fit_transform(X)
+    plt.figure(figsize=(7.0, 6.0))
+    lbls_num = labels.astype(int)
+    levels = [str(i) for i in sorted(np.unique(lbls_num))]
+    palette = sns.color_palette("husl", n_colors=len(levels))
+    sns.scatterplot(
+        x=X2[:, 0],
+        y=X2[:, 1],
+        hue=lbls_num.astype(str),
+        hue_order=levels,
+        palette=palette,
+        s=30,
+        linewidth=0,
+    )
+    plt.title(title)
+    plt.xlabel("UMAP 1")
+    plt.ylabel("UMAP 2")
+    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+
 def _save_cluster_cards(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_dir: Path, label_name: str = "cluster", top_n: int = 5):
     df = feats.copy()
     df[label_name] = labels
@@ -1154,6 +1202,31 @@ def main():
                 gmm_aic_best_labels,
                 f"GMM (best by AIC: k={aic_k}, cov={aic_cov})",
                 figures_dir / "gmm" / "gmm_aic_best_pca.png",
+            )
+    except Exception:
+        pass
+    # t-SNE and UMAP for GMM best-by-BIC clusters
+    try:
+        bic_k = gm_bic_best.get("k")
+        bic_cov = gm_bic_best.get("covariance_type")
+        if bic_k is not None and bic_cov is not None and gmm_bic_best_labels is not None:
+            tsne_scatter(
+                Xs,
+                gmm_bic_best_labels,
+                f"t-SNE (GMM best by BIC: k={bic_k}, cov={bic_cov})",
+                figures_dir / "gmm" / "gmm_bic_best_tsne.png",
+            )
+    except Exception:
+        pass
+    try:
+        bic_k = gm_bic_best.get("k")
+        bic_cov = gm_bic_best.get("covariance_type")
+        if bic_k is not None and bic_cov is not None and gmm_bic_best_labels is not None:
+            umap_scatter(
+                Xs,
+                gmm_bic_best_labels,
+                f"UMAP (GMM best by BIC: k={bic_k}, cov={bic_cov})",
+                figures_dir / "gmm" / "gmm_bic_best_umap.png",
             )
     except Exception:
         pass
