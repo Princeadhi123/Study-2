@@ -12,6 +12,10 @@ Agglomerative
   best_k: 2
   silhouette: 0.31670875056429615
 
+Birch
+  best_k: 3
+  silhouette: 0.34243275047101385
+
 GMM
   best_k: 2
   covariance_type: full

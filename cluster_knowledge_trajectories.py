@@ -8,7 +8,7 @@ from typing import Dict, Tuple
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN
+from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN, Birch
 from sklearn.metrics import silhouette_score
 from sklearn.mixture import GaussianMixture
 from sklearn.neighbors import NearestNeighbors
@@ -167,6 +167,27 @@ def _silhouette_curve_gmm(
     return pd.DataFrame(rows)
 
 
+def _silhouette_curve_birch(
+    X: np.ndarray,
+    k_range=range(2, 11),
+    threshold: float = 0.5,
+    branching_factor: int = 50,
+) -> pd.DataFrame:
+    rows = []
+    for k in k_range:
+        br = Birch(n_clusters=k, threshold=threshold, branching_factor=branching_factor)
+        labels = br.fit_predict(X)
+        try:
+            if len(np.unique(labels)) <= 1:
+                sil = -1.0
+            else:
+                sil = silhouette_score(X, labels)
+        except Exception:
+            sil = -1.0
+        rows.append({"K": int(k), "silhouette": float(sil)})
+    return pd.DataFrame(rows)
+
+
 def _save_line_plot(df: pd.DataFrame, x_col: str, y_col: str, title: str, out_path: Path):
     plt.figure(figsize=(7.5, 5.0))
     sns.lineplot(data=df, x=x_col, y=y_col, marker="o")
@@ -175,6 +196,7 @@ def _save_line_plot(df: pd.DataFrame, x_col: str, y_col: str, title: str, out_pa
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
     plt.close()
+
 
 def _save_cluster_cards(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_dir: Path, label_name: str = "cluster", top_n: int = 5):
     df = feats.copy()
@@ -201,7 +223,6 @@ def _save_cluster_cards(feats: pd.DataFrame, feature_cols: list, labels: np.ndar
         plt.savefig(out_dir / f"cluster_card_{k}.png", dpi=150)
         plt.close()
 
- 
 
 def _save_ridgeline_plots(feats: pd.DataFrame, labels: np.ndarray, out_dir: Path, features=None, label_name: str = "cluster"):
     df = feats.copy()
@@ -221,6 +242,8 @@ def _save_ridgeline_plots(feats: pd.DataFrame, labels: np.ndarray, out_dir: Path
         plt.tight_layout()
         g.savefig(out_dir / f"ridgeline_{col}.png", dpi=150)
         plt.close(g.fig)
+
+
 def _compute_effect_sizes(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, label_name: str = "cluster") -> pd.DataFrame:
     df = feats.copy()
     df[label_name] = labels
@@ -242,6 +265,7 @@ def _compute_effect_sizes(feats: pd.DataFrame, feature_cols: list, labels: np.nd
         effects[k] = es
     return pd.DataFrame(effects).T
 
+
 def _save_effect_size_heatmap(effect_df: pd.DataFrame, out_path: Path, title: str = "Cohen's d: cluster vs rest"):
     # Order columns by overall discriminativeness
     order = effect_df.abs().mean(axis=0).sort_values(ascending=False).index
@@ -252,6 +276,7 @@ def _save_effect_size_heatmap(effect_df: pd.DataFrame, out_path: Path, title: st
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
     plt.close()
+
 
 def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_path: Path, label_name: str = "cluster", x: str = "accuracy", y: str = "avg_rt"):
     df = feats.copy()
@@ -283,6 +308,7 @@ def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_pa
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
     plt.close()
+
 
 def _save_radar_all_clusters(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_path: Path, label_name: str = "cluster"):
     df = feats.copy()
@@ -317,6 +343,7 @@ def _save_radar_all_clusters(feats: pd.DataFrame, feature_cols: list, labels: np
     plt.savefig(out_path, dpi=150)
     plt.close()
 
+
 def _save_feature_boxplots(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, label_name: str, out_dir: Path):
     df = feats.copy()
     df[label_name] = labels
@@ -331,6 +358,7 @@ def _save_feature_boxplots(feats: pd.DataFrame, feature_cols: list, labels: np.n
         plt.tight_layout()
         plt.savefig(out_dir / f"{col}_by_{label_name}.png", dpi=150)
         plt.close()
+
 
 def _save_parallel_coordinates(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_path: Path, label_name: str = "cluster"):
     df = feats.copy()
@@ -432,6 +460,7 @@ def _save_cluster_profiles(feats: pd.DataFrame, feature_cols: list, labels: np.n
     zmeans.to_csv(profiles_dir / f"{label_name}_feature_zmeans.csv")
     _save_zmean_heatmap(df, feature_cols, label_name, f"Z-mean heatmap: {label_name}", figures_dir / f"{label_name}_zmean_heatmap.png")
 
+
 def _save_gmm_bic_composite(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, X: np.ndarray, out_path: Path):
     df = feats.copy()
     df["cluster"] = labels
@@ -473,6 +502,7 @@ def _save_gmm_bic_composite(feats: pd.DataFrame, feature_cols: list, labels: np.
     plt.savefig(out_path, dpi=150)
     plt.close()
 
+
 def _save_line_plot_hue(df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, title: str, out_path: Path):
     plt.figure(figsize=(7.5, 5.0))
     sns.lineplot(data=df, x=x_col, y=y_col, hue=hue_col, marker="o")
@@ -481,6 +511,7 @@ def _save_line_plot_hue(df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
     plt.close()
+
 
 def estimate_dbscan_elbow_eps(X: np.ndarray, min_samples: int) -> float:
     n = int(min_samples)
@@ -583,7 +614,7 @@ def dbscan_grid_diagnostics(
         eps_values = np.linspace(0.5, 3.0, 11)
     rows = []
     best_sil = {"eps": None, "min_samples": int(min_samples), "sil": -1.0, "n_clusters": 0, "noise_rate": 0.0}
-    best_sil_labels = None
+    best_labels = None
     best_comb = {"eps": None, "min_samples": int(min_samples), "sil": -1.0, "n_clusters": 0, "noise_rate": 0.0, "combined": -1.0}
     best_comb_labels = None
     for eps in eps_values:
@@ -614,11 +645,11 @@ def dbscan_grid_diagnostics(
         )
         if sil > best_sil["sil"]:
             best_sil = {"eps": float(eps), "min_samples": int(min_samples), "sil": float(sil), "n_clusters": int(n_clusters), "noise_rate": float(noise_rate)}
-            best_sil_labels = labels
+            best_labels = labels
         if combined > best_comb.get("combined", -1.0):
             best_comb = {"eps": float(eps), "min_samples": int(min_samples), "sil": float(sil), "n_clusters": int(n_clusters), "noise_rate": float(noise_rate), "combined": float(combined)}
             best_comb_labels = labels
-    return pd.DataFrame(rows), best_sil_labels, best_sil, best_comb_labels, best_comb
+    return pd.DataFrame(rows), best_labels, best_sil, best_comb_labels, best_comb
 
 
 def dbscan_k_distance_plot(
@@ -648,6 +679,7 @@ def dbscan_k_distance_plot(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
     plt.close()
+
 
 def agglomerative_sweep(X: np.ndarray, k_range=range(2, 11)) -> Tuple[np.ndarray, Dict]:
     best = {"k": None, "sil": -1.0}
@@ -687,6 +719,30 @@ def gmm_sweep(
                     best_labels = labels
             except Exception:
                 continue
+    return best_labels, best
+
+
+def birch_sweep(
+    X: np.ndarray,
+    k_range=range(2, 11),
+    threshold: float = 0.5,
+    branching_factor: int = 50,
+) -> Tuple[np.ndarray, Dict]:
+    best = {"k": None, "sil": -1.0}
+    best_labels = None
+    for k in k_range:
+        br = Birch(n_clusters=k, threshold=threshold, branching_factor=branching_factor)
+        labels = br.fit_predict(X)
+        try:
+            if len(np.unique(labels)) <= 1:
+                sil = -1.0
+            else:
+                sil = silhouette_score(X, labels)
+        except Exception:
+            sil = -1.0
+        if sil > best["sil"]:
+            best = {"k": int(k), "sil": float(sil)}
+            best_labels = labels
     return best_labels, best
 
 
@@ -754,6 +810,7 @@ def write_report(report_path: Path, summary: Dict):
     km = summary.get("kmeans", {})
     ag = summary.get("agglomerative", {})
     gm = summary.get("gmm", {})
+    br = summary.get("birch", {})
     db = summary.get("dbscan", {})
     db_comb = summary.get("dbscan_combined", {})
     db_elbow = summary.get("dbscan_elbow_eps", None)
@@ -767,6 +824,9 @@ def write_report(report_path: Path, summary: Dict):
     lines.append("Agglomerative\n")
     lines.append(f"  best_k: {ag.get('k')}\n")
     lines.append(f"  silhouette: {ag.get('sil')}\n\n")
+    lines.append("Birch\n")
+    lines.append(f"  best_k: {br.get('k')}\n")
+    lines.append(f"  silhouette: {br.get('sil')}\n\n")
     lines.append("GMM\n")
     lines.append(f"  best_k: {gm.get('k')}\n")
     lines.append(f"  covariance_type: {gm.get('covariance_type')}\n")
@@ -839,7 +899,8 @@ def main():
 
     km_labels, km_best = kmeans_sweep(Xs, k_range=range(2, 11))
     ag_labels, ag_best = agglomerative_sweep(Xs, k_range=range(2, 11))
-    gmm_labels, gmm_best = gmm_sweep(Xs, k_range=range(2, 11))
+    gm_labels, gm_best = gmm_sweep(Xs, k_range=range(2, 11))
+    br_labels, br_best = birch_sweep(Xs, k_range=range(2, 11))
 
     diagnostics_dir = out_dir / "diagnostics"
     diagnostics_dir.mkdir(parents=True, exist_ok=True)
@@ -848,18 +909,21 @@ def main():
     km_curve = _silhouette_curve_kmeans(Xs, k_range=range(2, 11))
     ag_curve = _silhouette_curve_agglomerative(Xs, k_range=range(2, 11))
     gm_curve = _silhouette_curve_gmm(Xs, k_range=range(2, 11))
+    br_curve = _silhouette_curve_birch(Xs, k_range=range(2, 11))
     km_curve.to_csv(diagnostics_dir / "kmeans_silhouette_vs_k.csv", index=False)
     ag_curve.to_csv(diagnostics_dir / "agglomerative_silhouette_vs_k.csv", index=False)
     gm_curve.to_csv(diagnostics_dir / "gmm_silhouette_vs_k.csv", index=False)
-    _save_line_plot(km_curve, "K", "silhouette", "KMeans silhouette vs K", figures_dir / "kmeans_silhouette_vs_k.png")
-    _save_line_plot(ag_curve, "K", "silhouette", "Agglomerative silhouette vs K", figures_dir / "agglomerative_silhouette_vs_k.png")
-    _save_line_plot(gm_curve, "K", "silhouette", "GMM silhouette vs K (best cov)", figures_dir / "gmm_silhouette_vs_k.png")
+    br_curve.to_csv(diagnostics_dir / "birch_silhouette_vs_k.csv", index=False)
+    _save_line_plot(km_curve, "K", "silhouette", "KMeans silhouette vs K", figures_dir / "kmeans" / "kmeans_silhouette_vs_k.png")
+    _save_line_plot(ag_curve, "K", "silhouette", "Agglomerative silhouette vs K", figures_dir / "agglomerative" / "agglomerative_silhouette_vs_k.png")
+    _save_line_plot(gm_curve, "K", "silhouette", "GMM silhouette vs K (best cov)", figures_dir / "gmm" / "gmm_silhouette_vs_k.png")
+    _save_line_plot(br_curve, "K", "silhouette", "Birch silhouette vs K", figures_dir / "birch" / "birch_silhouette_vs_k.png")
 
     # GMM information-criteria diagnostics (BIC/AIC)
     gm_bic_df, gm_bic_best, gm_aic_best = gmm_bic_aic_grid(Xs, k_range=range(2, 11))
     gm_bic_df.to_csv(diagnostics_dir / "gmm_bic_aic.csv", index=False)
-    _save_line_plot_hue(gm_bic_df, "K", "bic", "covariance_type", "GMM BIC vs K", figures_dir / "gmm_bic_vs_k.png")
-    _save_line_plot_hue(gm_bic_df, "K", "aic", "covariance_type", "GMM AIC vs K", figures_dir / "gmm_aic_vs_k.png")
+    _save_line_plot_hue(gm_bic_df, "K", "bic", "covariance_type", "GMM BIC vs K", figures_dir / "gmm" / "gmm_bic_vs_k.png")
+    _save_line_plot_hue(gm_bic_df, "K", "aic", "covariance_type", "GMM AIC vs K", figures_dir / "gmm" / "gmm_aic_vs_k.png")
 
     # Prepare labels for GMM models chosen by best BIC and best AIC
     try:
@@ -899,9 +963,9 @@ def main():
         Xs, eps_values=eps_values_expanded, min_samples_list=min_samples_list
     )
     db_multi_df.to_csv(diagnostics_dir / "dbscan_multi_sweep.csv", index=False)
-    _save_line_plot_hue(db_multi_df, "eps", "silhouette_core", "min_samples", "DBSCAN silhouette_core vs eps", figures_dir / "dbscan_silhouette_vs_eps.png")
-    _save_line_plot_hue(db_multi_df, "eps", "combined", "min_samples", "DBSCAN combined vs eps", figures_dir / "dbscan_combined_vs_eps.png")
-    _save_line_plot_hue(db_multi_df, "eps", "noise_rate", "min_samples", "DBSCAN noise_rate vs eps", figures_dir / "dbscan_noise_vs_eps.png")
+    _save_line_plot_hue(db_multi_df, "eps", "silhouette_core", "min_samples", "DBSCAN silhouette_core vs eps", figures_dir / "dbscan" / "dbscan_silhouette_vs_eps.png")
+    _save_line_plot_hue(db_multi_df, "eps", "combined", "min_samples", "DBSCAN combined vs eps", figures_dir / "dbscan" / "dbscan_combined_vs_eps.png")
+    _save_line_plot_hue(db_multi_df, "eps", "noise_rate", "min_samples", "DBSCAN noise_rate vs eps", figures_dir / "dbscan" / "dbscan_noise_vs_eps.png")
 
     noise_threshold = 0.20
     if db_multi_best_sil.get("noise_rate", 1.0) <= noise_threshold:
@@ -912,7 +976,7 @@ def main():
     dbscan_k_distance_plot(
         Xs,
         5,
-        figures_dir / "dbscan_kdistance.png",
+        figures_dir / "dbscan" / "dbscan_kdistance.png",
         mark_eps_list=[db_best.get("eps"), db_best_comb.get("eps"), elbow_eps, db_selected.get("eps")],
     )
     db_labels = db_labels_sil
@@ -922,7 +986,8 @@ def main():
             "IDCode": feats["IDCode"],
             "kmeans_label": km_labels,
             "agglomerative_label": ag_labels,
-            "gmm_label": gmm_labels,
+            "birch_label": br_labels,
+            "gmm_label": gm_labels,
             "gmm_bic_best_label": gmm_bic_best_labels,
             "gmm_aic_best_label": gmm_aic_best_labels,
             "dbscan_label": db_labels,
@@ -939,19 +1004,23 @@ def main():
     clusters.to_csv(clusters_out, index=False)
 
     try:
-        pca_scatter(Xs, km_labels, f"KMeans (k={km_best.get('k')})", figures_dir / "kmeans_pca.png")
+        pca_scatter(Xs, km_labels, f"KMeans (k={km_best.get('k')})", figures_dir / "kmeans" / "kmeans_pca.png")
     except Exception:
         pass
     try:
-        pca_scatter(Xs, ag_labels, f"Agglomerative (k={ag_best.get('k')})", figures_dir / "agglomerative_pca.png")
+        pca_scatter(Xs, ag_labels, f"Agglomerative (k={ag_best.get('k')})", figures_dir / "agglomerative" / "agglomerative_pca.png")
+    except Exception:
+        pass
+    try:
+        pca_scatter(Xs, br_labels, f"Birch (k={br_best.get('k')})", figures_dir / "birch" / "birch_pca.png")
     except Exception:
         pass
     try:
         pca_scatter(
             Xs,
-            gmm_labels,
-            f"GMM (k={gmm_best.get('k')}, cov={gmm_best.get('covariance_type')})",
-            figures_dir / "gmm_pca.png",
+            gm_labels,
+            f"GMM (k={gm_best.get('k')}, cov={gm_best.get('covariance_type')})",
+            figures_dir / "gmm" / "gmm_pca.png",
         )
     except Exception:
         pass
@@ -964,7 +1033,7 @@ def main():
                 Xs,
                 gmm_bic_best_labels,
                 f"GMM (best by BIC: k={bic_k}, cov={bic_cov})",
-                figures_dir / "gmm_bic_best_pca.png",
+                figures_dir / "gmm" / "gmm_bic_best_pca.png",
             )
     except Exception:
         pass
@@ -976,16 +1045,16 @@ def main():
                 Xs,
                 gmm_aic_best_labels,
                 f"GMM (best by AIC: k={aic_k}, cov={aic_cov})",
-                figures_dir / "gmm_aic_best_pca.png",
+                figures_dir / "gmm" / "gmm_aic_best_pca.png",
             )
     except Exception:
         pass
     try:
-        pca_scatter(Xs, db_labels, f"DBSCAN (best by silhouette, eps={db_best.get('eps')})", figures_dir / "dbscan_pca.png")
+        pca_scatter(Xs, db_labels, f"DBSCAN (best by silhouette, eps={db_best.get('eps')})", figures_dir / "dbscan" / "dbscan_pca.png")
     except Exception:
         pass
     try:
-        pca_scatter(Xs, db_labels_comb, f"DBSCAN (best by combined, eps={db_best_comb.get('eps')})", figures_dir / "dbscan_combined_pca.png")
+        pca_scatter(Xs, db_labels_comb, f"DBSCAN (best by combined, eps={db_best_comb.get('eps')})", figures_dir / "dbscan" / "dbscan_combined_pca.png")
     except Exception:
         pass
 
@@ -994,7 +1063,7 @@ def main():
             Xs,
             db_selected_labels,
             f"DBSCAN (selected, eps={db_selected.get('eps')}, min_samples={db_selected.get('min_samples')})",
-            figures_dir / "dbscan_selected_pca.png",
+            figures_dir / "dbscan" / "dbscan_selected_pca.png",
         )
     except Exception:
         pass
@@ -1007,7 +1076,7 @@ def main():
             gmm_bic_best_labels,
             "gmm_bic_best_label",
             out_dir / "profiles",
-            figures_dir,
+            figures_dir / "gmm",
         )
     except Exception:
         pass
@@ -1019,7 +1088,7 @@ def main():
             feature_cols,
             gmm_bic_best_labels,
             Xs,
-            figures_dir / "gmm_bic_cluster_summary.png",
+            figures_dir / "gmm" / "gmm_bic_cluster_summary.png",
         )
     except Exception:
         pass
@@ -1031,7 +1100,7 @@ def main():
             feature_cols,
             "gmm_bic_best_label",
             "Z-mean of technical features by cluster (GMM BIC)",
-            figures_dir / "gmm_bic_feature_zmean_by_cluster.png",
+            figures_dir / "gmm" / "gmm_bic_feature_zmean_by_cluster.png",
         )
     except Exception:
         pass
@@ -1051,7 +1120,7 @@ def main():
         _save_accuracy_speed_ellipse(
             feats,
             gmm_bic_best_labels,
-            figures_dir / "gmm_bic_accuracy_vs_rt_ellipses.png",
+            figures_dir / "gmm" / "gmm_bic_accuracy_vs_rt_ellipses.png",
             label_name="gmm_bic_best_label",
             x="accuracy",
             y="avg_rt",
@@ -1091,7 +1160,8 @@ def main():
         "feature_cols": feature_cols,
         "kmeans": km_best,
         "agglomerative": ag_best,
-        "gmm": gmm_best,
+        "birch": br_best,
+        "gmm": gm_best,
         "dbscan": db_best,
         "dbscan_combined": db_best_comb,
         "dbscan_elbow_eps": elbow_eps,
