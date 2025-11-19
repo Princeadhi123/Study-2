@@ -8,6 +8,7 @@ from typing import Dict, Tuple
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN, Birch
 from sklearn.metrics import silhouette_score
 from sklearn.mixture import GaussianMixture
@@ -98,7 +99,7 @@ def scale_features(feats: pd.DataFrame, feature_cols: list) -> Tuple[np.ndarray,
     return Xs, scaler
 
 
-def kmeans_sweep(X: np.ndarray, k_range=range(2, 11)) -> Tuple[np.ndarray, Dict]:
+def kmeans_sweep(X: np.ndarray, k_range=range(2, 16)) -> Tuple[np.ndarray, Dict]:
     best = {"k": None, "sil": -1.0}
     best_labels = None
     for k in k_range:
@@ -114,7 +115,7 @@ def kmeans_sweep(X: np.ndarray, k_range=range(2, 11)) -> Tuple[np.ndarray, Dict]
     return best_labels, best
 
 
-def _silhouette_curve_kmeans(X: np.ndarray, k_range=range(2, 11)) -> pd.DataFrame:
+def _silhouette_curve_kmeans(X: np.ndarray, k_range=range(2, 16)) -> pd.DataFrame:
     rows = []
     for k in k_range:
         km = KMeans(n_clusters=k, random_state=42, n_init=10)
@@ -127,7 +128,7 @@ def _silhouette_curve_kmeans(X: np.ndarray, k_range=range(2, 11)) -> pd.DataFram
     return pd.DataFrame(rows)
 
 
-def _silhouette_curve_agglomerative(X: np.ndarray, k_range=range(2, 11)) -> pd.DataFrame:
+def _silhouette_curve_agglomerative(X: np.ndarray, k_range=range(2, 16)) -> pd.DataFrame:
     rows = []
     for k in k_range:
         agg = AgglomerativeClustering(n_clusters=k, linkage="ward")
@@ -142,7 +143,7 @@ def _silhouette_curve_agglomerative(X: np.ndarray, k_range=range(2, 11)) -> pd.D
 
 def _silhouette_curve_gmm(
     X: np.ndarray,
-    k_range=range(2, 11),
+    k_range=range(2, 16),
     covariance_types=("full", "diag", "tied", "spherical"),
 ) -> pd.DataFrame:
     rows = []
@@ -169,22 +170,28 @@ def _silhouette_curve_gmm(
 
 def _silhouette_curve_birch(
     X: np.ndarray,
-    k_range=range(2, 11),
-    threshold: float = 0.5,
+    k_range=range(2, 16),
+    thresholds=(0.3, 0.5, 0.7, 0.9),
     branching_factor: int = 50,
 ) -> pd.DataFrame:
     rows = []
     for k in k_range:
-        br = Birch(n_clusters=k, threshold=threshold, branching_factor=branching_factor)
-        labels = br.fit_predict(X)
-        try:
-            if len(np.unique(labels)) <= 1:
+        best_sil = -1.0
+        best_thr = None
+        for thr in thresholds:
+            try:
+                br = Birch(n_clusters=int(k), threshold=float(thr), branching_factor=int(branching_factor))
+                labels = br.fit_predict(X)
+                if len(np.unique(labels)) <= 1:
+                    sil = -1.0
+                else:
+                    sil = silhouette_score(X, labels)
+            except Exception:
                 sil = -1.0
-            else:
-                sil = silhouette_score(X, labels)
-        except Exception:
-            sil = -1.0
-        rows.append({"K": int(k), "silhouette": float(sil)})
+            if sil > best_sil:
+                best_sil = float(sil)
+                best_thr = float(thr)
+        rows.append({"K": int(k), "silhouette": float(best_sil), "best_threshold": best_thr})
     return pd.DataFrame(rows)
 
 
@@ -192,6 +199,37 @@ def _save_line_plot(df: pd.DataFrame, x_col: str, y_col: str, title: str, out_pa
     plt.figure(figsize=(7.5, 5.0))
     sns.lineplot(data=df, x=x_col, y=y_col, marker="o")
     plt.title(title)
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+
+def tsne_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path, perplexity: float = 30.0):
+    n_samples = X.shape[0]
+    if n_samples < 2:
+        return
+    # Clamp perplexity to a sensible range relative to n_samples
+    max_perp = max(5.0, min(perplexity, (n_samples - 1) / 3.0))
+    tsne = TSNE(n_components=2, random_state=42, perplexity=max_perp, init="random", learning_rate="auto")
+    X2 = tsne.fit_transform(X)
+    plt.figure(figsize=(7.0, 6.0))
+    lbls_num = labels.astype(int)
+    levels = [str(i) for i in sorted(np.unique(lbls_num))]
+    palette = sns.color_palette("husl", n_colors=len(levels))
+    sns.scatterplot(
+        x=X2[:, 0],
+        y=X2[:, 1],
+        hue=lbls_num.astype(str),
+        hue_order=levels,
+        palette=palette,
+        s=30,
+        linewidth=0,
+    )
+    plt.title(title)
+    plt.xlabel("t-SNE 1")
+    plt.ylabel("t-SNE 2")
+    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc="upper left")
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
@@ -232,7 +270,16 @@ def _save_ridgeline_plots(feats: pd.DataFrame, labels: np.ndarray, out_dir: Path
         features = ["accuracy", "avg_rt", "rt_cv"]
     for col in features:
         d = pd.DataFrame({col: df[col], label_name: df[label_name]})
-        g = sns.FacetGrid(d, row=label_name, hue=label_name, aspect=6, height=1.0, palette="tab10", sharex=True, sharey=False)
+        g = sns.FacetGrid(
+            d,
+            row=label_name,
+            hue=label_name,
+            aspect=6,
+            height=1.0,
+            palette=sns.color_palette("husl", n_colors=df[label_name].nunique()),
+            sharex=True,
+            sharey=False,
+        )
         g.map(sns.kdeplot, col, fill=True, alpha=0.8, linewidth=1)
         g.map(plt.axhline, y=0, lw=1, clip_on=False)
         g.set(yticks=[], ylabel="")
@@ -284,7 +331,7 @@ def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_pa
     plt.figure(figsize=(8, 6))
     ax = plt.gca()
     uniq = sorted(df[label_name].unique())
-    palette = sns.color_palette("tab10", n_colors=len(uniq))
+    palette = sns.color_palette("husl", n_colors=len(uniq))
     for i, k in enumerate(uniq):
         sub = df[df[label_name] == k]
         ax.scatter(sub[x], sub[y], s=10, alpha=0.15, color=palette[i])
@@ -325,7 +372,7 @@ def _save_radar_all_clusters(feats: pd.DataFrame, feature_cols: list, labels: np
     angles += angles[:1]
     plt.figure(figsize=(9, 7))
     ax = plt.subplot(111, polar=True)
-    palette = sns.color_palette("tab10", n_colors=len(zmean))
+    palette = sns.color_palette("husl", n_colors=len(zmean))
     for i, k in enumerate(zmean.index.tolist()):
         vals = zmean.loc[k, :].to_numpy().astype(float)
         vals = np.clip(vals, -3.0, 3.0)
@@ -370,12 +417,13 @@ def _save_parallel_coordinates(feats: pd.DataFrame, feature_cols: list, labels: 
     plot_df[label_name] = df[label_name].astype(str)
     plt.figure(figsize=(12, 6))
     ax = plt.gca()
-    parallel_coordinates(plot_df, class_column=label_name, cols=feature_cols, ax=ax, color=sns.color_palette("tab10"))
+    colors = sns.color_palette("husl", n_colors=len(plot_df[label_name].unique()))
+    parallel_coordinates(plot_df, class_column=label_name, cols=feature_cols, ax=ax, color=colors)
     for ln in ax.lines:
         ln.set_alpha(0.12)
     # Overlay cluster medians for clarity
     med = plot_df.groupby(label_name)[feature_cols].median().sort_index()
-    palette = sns.color_palette("tab10", n_colors=len(med))
+    palette = sns.color_palette("husl", n_colors=len(med))
     angles = np.arange(len(feature_cols))
     for i, (k, row) in enumerate(med.iterrows()):
         ax.plot(angles, row.values, color=palette[i], linewidth=2.5)
@@ -491,12 +539,19 @@ def _save_gmm_bic_composite(feats: pd.DataFrame, feature_cols: list, labels: np.
     ax_bar.set_xlabel("Cluster")
     ax_bar.set_ylabel("Count")
     ax_sc = plt.subplot(gs[:, 1])
-    sc = ax_sc.scatter(X2[:, 0], X2[:, 1], c=labels, cmap="tab10", s=25)
+    uniq = sorted(np.unique(labels))
+    palette = sns.color_palette("husl", n_colors=len(uniq))
+    color_map = {int(k): palette[i] for i, k in enumerate(uniq)}
+    point_colors = [color_map[int(l)] for l in labels]
+    sc = ax_sc.scatter(X2[:, 0], X2[:, 1], c=point_colors, s=25)
     ax_sc.set_title("PCA scatter by cluster (GMM BIC)")
     ax_sc.set_xlabel("PC1")
     ax_sc.set_ylabel("PC2")
-    handles, _ = sc.legend_elements(prop="colors", alpha=0.6)
-    ax_sc.legend(handles, [str(i) for i in sorted(counts.index)], title="Cluster", bbox_to_anchor=(1.02, 1), loc="upper left")
+    handles = [
+        plt.Line2D([], [], marker="o", linestyle="", color=color_map[int(k)], markersize=6)
+        for k in uniq
+    ]
+    ax_sc.legend(handles, [str(int(i)) for i in uniq], title="Cluster", bbox_to_anchor=(1.02, 1), loc="upper left")
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
@@ -699,7 +754,7 @@ def agglomerative_sweep(X: np.ndarray, k_range=range(2, 11)) -> Tuple[np.ndarray
 
 def gmm_sweep(
     X: np.ndarray,
-    k_range=range(2, 11),
+    k_range=range(2, 16),
     covariance_types=("full", "diag", "tied", "spherical"),
 ) -> Tuple[np.ndarray, Dict]:
     best = {"k": None, "covariance_type": None, "sil": -1.0}
@@ -724,25 +779,31 @@ def gmm_sweep(
 
 def birch_sweep(
     X: np.ndarray,
-    k_range=range(2, 11),
-    threshold: float = 0.5,
+    k_range=range(2, 16),
+    thresholds=(0.3, 0.5, 0.7, 0.9),
     branching_factor: int = 50,
 ) -> Tuple[np.ndarray, Dict]:
-    best = {"k": None, "sil": -1.0}
+    best = {"k": None, "threshold": None, "branching_factor": int(branching_factor), "sil": -1.0}
     best_labels = None
     for k in k_range:
-        br = Birch(n_clusters=k, threshold=threshold, branching_factor=branching_factor)
-        labels = br.fit_predict(X)
-        try:
-            if len(np.unique(labels)) <= 1:
+        for thr in thresholds:
+            try:
+                br = Birch(n_clusters=int(k), threshold=float(thr), branching_factor=int(branching_factor))
+                labels = br.fit_predict(X)
+                if len(np.unique(labels)) <= 1:
+                    sil = -1.0
+                else:
+                    sil = silhouette_score(X, labels)
+            except Exception:
                 sil = -1.0
-            else:
-                sil = silhouette_score(X, labels)
-        except Exception:
-            sil = -1.0
-        if sil > best["sil"]:
-            best = {"k": int(k), "sil": float(sil)}
-            best_labels = labels
+            if sil > best["sil"]:
+                best = {
+                    "k": int(k),
+                    "threshold": float(thr),
+                    "branching_factor": int(branching_factor),
+                    "sil": float(sil),
+                }
+                best_labels = labels
     return best_labels, best
 
 
@@ -781,7 +842,7 @@ def pca_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path):
     # Ensure consistent colors and ordered legend (0..K-1)
     lbls_num = labels.astype(int)
     levels = [str(i) for i in sorted(np.unique(lbls_num))]
-    palette = sns.color_palette("tab10", n_colors=len(levels))
+    palette = sns.color_palette("husl", n_colors=len(levels))
     sns.scatterplot(
         x=X2[:, 0],
         y=X2[:, 1],
@@ -818,6 +879,7 @@ def write_report(report_path: Path, summary: Dict):
     db_noise_thr = summary.get("dbscan_noise_threshold", None)
     gm_bic = summary.get("gmm_bic_best", {})
     gm_aic = summary.get("gmm_aic_best", {})
+    best_overall = summary.get("best_overall", {})
     lines.append("KMeans\n")
     lines.append(f"  best_k: {km.get('k')}\n")
     lines.append(f"  silhouette: {km.get('sil')}\n\n")
@@ -866,6 +928,21 @@ def write_report(report_path: Path, summary: Dict):
         if gm_aic:
             lines.append(f"  best_by_AIC: k={gm_aic.get('k')}, cov={gm_aic.get('covariance_type')}, BIC={gm_aic.get('bic')}, AIC={gm_aic.get('aic')}\n")
         lines.append("\n")
+    if best_overall:
+        lines.append("Best overall clustering (by silhouette)\n")
+        lines.append(f"  algorithm: {best_overall.get('algorithm')}\n")
+        lines.append(f"  silhouette: {best_overall.get('sil')}\n")
+        if best_overall.get("k") is not None:
+            lines.append(f"  k: {best_overall.get('k')}\n")
+        if best_overall.get("covariance_type") is not None:
+            lines.append(f"  covariance_type: {best_overall.get('covariance_type')}\n")
+        if best_overall.get("threshold") is not None:
+            lines.append(f"  threshold: {best_overall.get('threshold')}\n")
+        if best_overall.get("eps") is not None:
+            lines.append(f"  eps: {best_overall.get('eps')}\n")
+        if best_overall.get("min_samples") is not None:
+            lines.append(f"  min_samples: {best_overall.get('min_samples')}\n")
+        lines.append("\n")
     report_path.write_text("".join(lines), encoding="utf-8")
 
 
@@ -897,19 +974,19 @@ def main():
 
     Xs, scaler = scale_features(feats, feature_cols)
 
-    km_labels, km_best = kmeans_sweep(Xs, k_range=range(2, 11))
-    ag_labels, ag_best = agglomerative_sweep(Xs, k_range=range(2, 11))
-    gm_labels, gm_best = gmm_sweep(Xs, k_range=range(2, 11))
-    br_labels, br_best = birch_sweep(Xs, k_range=range(2, 11))
+    km_labels, km_best = kmeans_sweep(Xs, k_range=range(2, 16))
+    ag_labels, ag_best = agglomerative_sweep(Xs, k_range=range(2, 16))
+    gm_labels, gm_best = gmm_sweep(Xs, k_range=range(2, 16))
+    br_labels, br_best = birch_sweep(Xs, k_range=range(2, 16))
 
     diagnostics_dir = out_dir / "diagnostics"
     diagnostics_dir.mkdir(parents=True, exist_ok=True)
 
     # Per-K silhouette curves (CSV + plots)
-    km_curve = _silhouette_curve_kmeans(Xs, k_range=range(2, 11))
-    ag_curve = _silhouette_curve_agglomerative(Xs, k_range=range(2, 11))
-    gm_curve = _silhouette_curve_gmm(Xs, k_range=range(2, 11))
-    br_curve = _silhouette_curve_birch(Xs, k_range=range(2, 11))
+    km_curve = _silhouette_curve_kmeans(Xs, k_range=range(2, 16))
+    ag_curve = _silhouette_curve_agglomerative(Xs, k_range=range(2, 16))
+    gm_curve = _silhouette_curve_gmm(Xs, k_range=range(2, 16))
+    br_curve = _silhouette_curve_birch(Xs, k_range=range(2, 16))
     km_curve.to_csv(diagnostics_dir / "kmeans_silhouette_vs_k.csv", index=False)
     ag_curve.to_csv(diagnostics_dir / "agglomerative_silhouette_vs_k.csv", index=False)
     gm_curve.to_csv(diagnostics_dir / "gmm_silhouette_vs_k.csv", index=False)
@@ -920,7 +997,7 @@ def main():
     _save_line_plot(br_curve, "K", "silhouette", "Birch silhouette vs K", figures_dir / "birch" / "birch_silhouette_vs_k.png")
 
     # GMM information-criteria diagnostics (BIC/AIC)
-    gm_bic_df, gm_bic_best, gm_aic_best = gmm_bic_aic_grid(Xs, k_range=range(2, 11))
+    gm_bic_df, gm_bic_best, gm_aic_best = gmm_bic_aic_grid(Xs, k_range=range(2, 16))
     gm_bic_df.to_csv(diagnostics_dir / "gmm_bic_aic.csv", index=False)
     _save_line_plot_hue(gm_bic_df, "K", "bic", "covariance_type", "GMM BIC vs K", figures_dir / "gmm" / "gmm_bic_vs_k.png")
     _save_line_plot_hue(gm_bic_df, "K", "aic", "covariance_type", "GMM AIC vs K", figures_dir / "gmm" / "gmm_aic_vs_k.png")
@@ -981,20 +1058,51 @@ def main():
     )
     db_labels = db_labels_sil
 
-    clusters = pd.DataFrame(
-        {
-            "IDCode": feats["IDCode"],
-            "kmeans_label": km_labels,
-            "agglomerative_label": ag_labels,
-            "birch_label": br_labels,
-            "gmm_label": gm_labels,
-            "gmm_bic_best_label": gmm_bic_best_labels,
-            "gmm_aic_best_label": gmm_aic_best_labels,
-            "dbscan_label": db_labels,
-            "dbscan_combined_label": db_labels_comb,
-            "dbscan_selected_label": db_selected_labels,
-        }
-    )
+    # Determine best overall clustering by silhouette across algorithms
+    best_overall_algo = None
+    best_overall_sil = -1.0
+    best_overall_labels = None
+    best_overall_params = {}
+
+    candidates = [
+        ("kmeans", km_best.get("sil"), km_labels, {"k": km_best.get("k")}),
+        ("agglomerative", ag_best.get("sil"), ag_labels, {"k": ag_best.get("k")}),
+        ("birch", br_best.get("sil"), br_labels, {"k": br_best.get("k"), "threshold": br_best.get("threshold"), "branching_factor": br_best.get("branching_factor")}),
+        ("gmm", gm_best.get("sil"), gm_labels, {"k": gm_best.get("k"), "covariance_type": gm_best.get("covariance_type")}),
+        ("dbscan", db_best.get("sil"), db_labels, {"eps": db_best.get("eps"), "min_samples": db_best.get("min_samples"), "n_clusters": db_best.get("n_clusters")}),
+    ]
+
+    for algo, sil, labels_arr, params in candidates:
+        try:
+            s_val = float(sil) if sil is not None else -1.0
+        except Exception:
+            s_val = -1.0
+        if labels_arr is None:
+            continue
+        if s_val > best_overall_sil:
+            best_overall_sil = s_val
+            best_overall_algo = algo
+            best_overall_labels = labels_arr
+            best_overall_params = params or {}
+
+    clusters_dict = {
+        "IDCode": feats["IDCode"],
+        "kmeans_label": km_labels,
+        "agglomerative_label": ag_labels,
+        "birch_label": br_labels,
+        "gmm_label": gm_labels,
+        "gmm_bic_best_label": gmm_bic_best_labels,
+        "gmm_aic_best_label": gmm_aic_best_labels,
+        "dbscan_label": db_labels,
+        "dbscan_combined_label": db_labels_comb,
+        "dbscan_selected_label": db_selected_labels,
+    }
+    if best_overall_labels is not None:
+        clusters_dict["best_overall_label"] = best_overall_labels
+    else:
+        clusters_dict["best_overall_label"] = np.full(len(feats), -1)
+
+    clusters = pd.DataFrame(clusters_dict)
 
     feats_out = out_dir / "derived_features.csv"
     clusters_out = out_dir / "student_clusters.csv"
@@ -1155,6 +1263,31 @@ def main():
     except Exception:
         pass
 
+    # t-SNE visualization for the best-overall clustering
+    try:
+        if best_overall_algo is not None and best_overall_labels is not None:
+            if best_overall_algo == "kmeans":
+                tsne_path = figures_dir / "kmeans" / "kmeans_tsne.png"
+            elif best_overall_algo == "agglomerative":
+                tsne_path = figures_dir / "agglomerative" / "agglomerative_tsne.png"
+            elif best_overall_algo == "birch":
+                tsne_path = figures_dir / "birch" / "birch_tsne.png"
+            elif best_overall_algo == "gmm":
+                tsne_path = figures_dir / "gmm" / "gmm_tsne.png"
+            elif best_overall_algo == "dbscan":
+                tsne_path = figures_dir / "dbscan" / "dbscan_tsne.png"
+            else:
+                tsne_path = figures_dir / "tsne_best_overall.png"
+            tsne_scatter(Xs, best_overall_labels, f"t-SNE best overall ({best_overall_algo})", tsne_path)
+    except Exception:
+        pass
+
+    best_overall_summary = {
+        "algorithm": best_overall_algo,
+        "sil": float(best_overall_sil) if best_overall_sil is not None else None,
+    }
+    best_overall_summary.update(best_overall_params)
+
     summary = {
         "n_students": int(len(feats)),
         "feature_cols": feature_cols,
@@ -1169,6 +1302,7 @@ def main():
         "dbscan_noise_threshold": noise_threshold,
         "gmm_bic_best": gm_bic_best,
         "gmm_aic_best": gm_aic_best,
+        "best_overall": best_overall_summary,
     }
     write_report(report_out, summary)
 

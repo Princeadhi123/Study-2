@@ -13,8 +13,8 @@ Agglomerative
   silhouette: 0.31670875056429615
 
 Birch
-  best_k: 3
-  silhouette: 0.34243275047101385
+  best_k: 2
+  silhouette: 0.44694023407615197
 
 GMM
   best_k: 2
@@ -48,5 +48,11 @@ DBSCAN auto-selection (threshold on noise rate)
 
 GMM model selection (information criteria)
   best_by_BIC: k=7, cov=full, BIC=-14570.513175357546, AIC=-16910.426682328878
-  best_by_AIC: k=9, cov=full, BIC=-14255.765204637628, AIC=-17265.45211910901
+  best_by_AIC: k=13, cov=full, BIC=-13292.652219307402, AIC=-17641.885948778887
+
+Best overall clustering (by silhouette)
+  algorithm: dbscan
+  silhouette: 0.6771369809082548
+  eps: 0.5
+  min_samples: 5
 
