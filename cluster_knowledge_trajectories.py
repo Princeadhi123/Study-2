@@ -587,56 +587,6 @@ def _save_cluster_profiles(feats: pd.DataFrame, feature_cols: list, labels: np.n
     zmeans.to_csv(profiles_dir / f"{label_name}_feature_zmeans.csv")
     _save_zmean_heatmap(df, feature_cols, label_name, f"Z-mean heatmap: {label_name}", figures_dir / f"{label_name}_zmean_heatmap.png")
 
-
-def _save_gmm_bic_composite(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, X: np.ndarray, out_path: Path):
-    df = feats.copy()
-    df["cluster"] = labels
-    # Drop constant features (e.g., n_items) from visualization
-    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
-    # Z-mean profiles
-    mu = df[feature_cols].mean()
-    sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
-    z = (df[feature_cols] - mu) / sd
-    zmean = z.join(df["cluster"]).groupby("cluster")[feature_cols].mean().sort_index()
-    # Counts
-    counts = df["cluster"].value_counts().sort_index()
-    # PCA projection
-    if X.shape[1] > 2:
-        pca = PCA(n_components=2, random_state=42)
-        X2 = pca.fit_transform(X)
-    else:
-        X2 = X
-    # Figure layout
-    plt.figure(figsize=(14, 8))
-    gs = plt.GridSpec(2, 2, width_ratios=[1.1, 1.6], height_ratios=[2.0, 1.0])
-    ax_heat = plt.subplot(gs[0, 0])
-    sns.heatmap(zmean, cmap="coolwarm", center=0, annot=False, cbar=True, ax=ax_heat)
-    ax_heat.set_title("GMM (BIC) z-mean feature profiles")
-    ax_bar = plt.subplot(gs[1, 0])
-    ax_bar.bar(counts.index.astype(str), counts.values, color="#69b3a2")
-    ax_bar.set_title("Cluster sizes")
-    ax_bar.set_xlabel("Cluster")
-    ax_bar.set_ylabel("Count")
-    ax_sc = plt.subplot(gs[:, 1])
-    uniq = sorted(np.unique(labels))
-    palette = sns.color_palette("husl", n_colors=len(uniq))
-    color_map = {int(k): palette[i] for i, k in enumerate(uniq)}
-    point_colors = [color_map[int(l)] for l in labels]
-    sc = ax_sc.scatter(X2[:, 0], X2[:, 1], c=point_colors, s=25)
-    ax_sc.set_title("PCA scatter by cluster (GMM BIC)")
-    ax_sc.set_xlabel("PC1")
-    ax_sc.set_ylabel("PC2")
-    handles = [
-        plt.Line2D([], [], marker="o", linestyle="", color=color_map[int(k)], markersize=6)
-        for k in uniq
-    ]
-    ax_sc.legend(handles, [str(int(i)) for i in uniq], title="Cluster", bbox_to_anchor=(1.02, 1), loc="upper left")
-    plt.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150)
-    plt.close()
-
-
 def _save_line_plot_hue(df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, title: str, out_path: Path):
     plt.figure(figsize=(7.5, 5.0))
     sns.lineplot(data=df, x=x_col, y=y_col, hue=hue_col, marker="o")
@@ -1345,19 +1295,6 @@ def main():
             "gmm_bic_best_label",
             out_dir / "profiles",
             figures_dir / "gmm" / "BIC",
-        )
-
-    except Exception:
-        pass
-
-    # Composite summary figure: heatmap + sizes + PCA scatter
-    try:
-        _save_gmm_bic_composite(
-            feats,
-            feature_cols,
-            gmm_bic_best_labels,
-            Xs,
-            figures_dir / "gmm" / "BIC" / "gmm_bic_cluster_summary.png",
         )
 
     except Exception:
