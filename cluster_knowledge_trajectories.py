@@ -452,9 +452,29 @@ def _save_cluster_cards(feats: pd.DataFrame, feature_cols: list, labels: np.ndar
     zmean = z.join(df[label_name]).groupby(label_name)[feature_cols].mean().sort_index()
     means = df.groupby(label_name)[feature_cols].mean().sort_index()
     counts = df[label_name].value_counts().sort_index()
+    equivalent_feature_groups = {
+        "accuracy_level": {"total_correct", "total_incorrect", "accuracy"},
+        "correctness_dynamics": {"longest_correct_streak", "longest_incorrect_streak", "consecutive_correct_rate"},
+        "response_time": {"avg_rt", "var_rt", "rt_cv"},
+    }
+    feature_to_group = {}
+    for g, cols in equivalent_feature_groups.items():
+        for c in cols:
+            if c in feature_cols:
+                feature_to_group[c] = g
     for k in zmean.index:
         ser = zmean.loc[k].abs().sort_values(ascending=False)
-        feat = ser.index[:top_n]
+        selected = []
+        used_groups = set()
+        for f in ser.index:
+            g = feature_to_group.get(f, f)
+            if g in used_groups:
+                continue
+            selected.append(f)
+            used_groups.add(g)
+            if len(selected) >= top_n:
+                break
+        feat = selected
         zvals = zmean.loc[k, feat].sort_values()
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.barh(zvals.index, zvals.values, color=["#d62728" if v>0 else "#1f77b4" for v in zmean.loc[k, zvals.index].values])
