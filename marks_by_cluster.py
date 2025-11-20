@@ -7,6 +7,34 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
+CLUSTER_COLORS = [
+    "#E41A1C",  # strong red
+    "#377EB8",  # strong blue
+    "#4DAF4A",  # green
+    "#984EA3",  # purple
+    "#FF7F00",  # orange
+    "#00CED1",  # cyan
+    "#A65628",  # brown
+    "#F781BF",  # pink
+    "#1B9E77",  # teal
+    "#D95F02",  # dark orange
+    "#7570B3",  # indigo
+    "#E7298A",  # magenta
+    "#66A61E",  # olive green
+    "#E6AB02",  # mustard
+    "#A6761D",  # ochre
+    "#666666",  # dark grey (used only if many clusters)
+]
+
+
+def get_cluster_palette(n: int) -> list:
+    if n <= len(CLUSTER_COLORS):
+        return CLUSTER_COLORS[:n]
+    reps = int(np.ceil(float(n) / float(len(CLUSTER_COLORS))))
+    pal = (CLUSTER_COLORS * reps)[:n]
+    return pal
+
+
 def _detect_id_col(df: pd.DataFrame) -> str:
     cand = [c for c in df.columns if c.lower() in {"idcode", "id", "studentid", "student_id"}]
     if cand:
@@ -123,7 +151,7 @@ def _save_subject_radar_all_clusters(df: pd.DataFrame, cluster_col: str, subj_co
     angles += angles[:1]
     plt.figure(figsize=(9, 7))
     ax = plt.subplot(111, polar=True)
-    palette = sns.color_palette("tab10", n_colors=len(zmean))
+    palette = get_cluster_palette(len(zmean))
     for i, (k, row) in enumerate(zmean.iterrows()):
         vals = row.values.astype(float)
         vals = np.clip(vals, -3.0, 3.0)

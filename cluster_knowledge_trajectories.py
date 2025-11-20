@@ -20,6 +20,31 @@ import seaborn as sns
 warnings.filterwarnings("ignore")
 
 LEGEND_LOC_UPPER_LEFT = "upper left"
+CLUSTER_COLORS = [
+    "#E41A1C",  # strong red
+    "#377EB8",  # strong blue
+    "#4DAF4A",  # green
+    "#984EA3",  # purple
+    "#FF7F00",  # orange
+    "#00CED1",  # cyan
+    "#A65628",  # brown
+    "#F781BF",  # pink
+    "#1B9E77",  # teal
+    "#D95F02",  # dark orange
+    "#7570B3",  # indigo
+    "#E7298A",  # magenta
+    "#66A61E",  # olive green
+    "#E6AB02",  # mustard
+    "#A6761D",  # ochre
+]
+
+
+def get_cluster_palette(n: int) -> list:
+    if n <= len(CLUSTER_COLORS):
+        return CLUSTER_COLORS[:n]
+    reps = int(np.ceil(float(n) / float(len(CLUSTER_COLORS))))
+    pal = (CLUSTER_COLORS * reps)[:n]
+    return pal
 
 
 def _longest_streak(arr: np.ndarray, value: int = 1) -> int:
@@ -373,7 +398,7 @@ def tsne_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path, 
     plt.figure(figsize=(7.0, 6.0))
     lbls_num = labels.astype(int)
     levels = [str(i) for i in sorted(np.unique(lbls_num))]
-    palette = sns.color_palette("husl", n_colors=len(levels))
+    palette = get_cluster_palette(len(levels))
     sns.scatterplot(
         x=X2[:, 0],
         y=X2[:, 1],
@@ -421,7 +446,7 @@ def umap_scatter(
     plt.figure(figsize=(7.0, 6.0))
     lbls_num = labels.astype(int)
     levels = [str(i) for i in sorted(np.unique(lbls_num))]
-    palette = sns.color_palette("husl", n_colors=len(levels))
+    palette = get_cluster_palette(len(levels))
     sns.scatterplot(
         x=X2[:, 0],
         y=X2[:, 1],
@@ -494,7 +519,7 @@ def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_pa
     plt.figure(figsize=(10, 7.5))
     ax = plt.gca()
     uniq = sorted(df[label_name].unique())
-    palette = sns.color_palette("husl", n_colors=len(uniq))
+    palette = get_cluster_palette(len(uniq))
     for i, k in enumerate(uniq):
         sub = df[df[label_name] == k]
         ax.scatter(sub[x], sub[y], s=10, alpha=0.15, color=palette[i])
@@ -876,7 +901,7 @@ def pca_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path):
     # Ensure consistent colors and ordered legend (0..K-1)
     lbls_num = labels.astype(int)
     levels = [str(i) for i in sorted(np.unique(lbls_num))]
-    palette = sns.color_palette("husl", n_colors=len(levels))
+    palette = get_cluster_palette(len(levels))
     sns.scatterplot(
         x=X2[:, 0],
         y=X2[:, 1],
@@ -915,7 +940,7 @@ def lda_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path):
         X2 = X_lda
     plt.figure(figsize=(7.0, 6.0))
     levels = [str(i) for i in sorted(uniq)]
-    palette = sns.color_palette("husl", n_colors=len(levels))
+    palette = get_cluster_palette(len(levels))
     sns.scatterplot(
         x=X2[:, 0],
         y=X2[:, 1],
