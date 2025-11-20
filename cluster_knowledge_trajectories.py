@@ -206,6 +206,75 @@ def _save_line_plot(df: pd.DataFrame, x_col: str, y_col: str, title: str, out_pa
     plt.close()
 
 
+
+def analyze_pca_loadings(X: np.ndarray, feature_names: list, out_dir: Path):
+    """
+    Performs PCA to analyze feature loadings and explained variance.
+    Saves:
+      1. Explained variance bar plot.
+      2. Loadings heatmap (Features x PCs).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Fit PCA
+    n_components = min(X.shape[0], X.shape[1])
+    pca = PCA(n_components=n_components, random_state=42)
+    pca.fit(X)
+    
+    # 1. Explained Variance Plot
+    exp_var = pca.explained_variance_ratio_
+    cum_var = np.cumsum(exp_var)
+    
+    plt.figure(figsize=(8, 5))
+    x_range = range(1, len(exp_var) + 1)
+    plt.bar(x_range, exp_var, alpha=0.6, label='Individual variance')
+    plt.step(x_range, cum_var, where='mid', label='Cumulative variance', color='red')
+    plt.ylabel('Explained variance ratio')
+    plt.xlabel('Principal component index')
+    plt.title('PCA Explained Variance')
+    plt.legend(loc='best')
+    plt.tight_layout()
+    plt.savefig(out_dir / "pca_explained_variance.png", dpi=150)
+    plt.close()
+    
+    # 2. Loadings Heatmap
+    # components_ is shape (n_components, n_features)
+    # We want rows=Features, cols=PCs for easier reading usually, or vice versa.
+    # Let's do Features (rows) x Top PCs (cols).
+    
+    # Limit to top K components that explain e.g. 90% variance, or just top 5
+    n_show = np.argmax(cum_var >= 0.90) + 1
+    n_show = max(2, min(n_show, 6)) # Show at least 2, at most 6
+    
+    loadings = pca.components_[:n_show].T # Shape (n_features, n_show)
+    
+    # Create DataFrame for heatmap
+    pc_names = [f"PC{i+1} ({exp_var[i]:.1%})" for i in range(n_show)]
+    loadings_df = pd.DataFrame(loadings, index=feature_names, columns=pc_names)
+    
+    plt.figure(figsize=(8, max(6, len(feature_names) * 0.4)))
+    sns.heatmap(loadings_df, annot=True, cmap="RdBu_r", center=0, fmt=".2f")
+    plt.title("PCA Loadings (Feature Correlations with PCs)")
+    plt.tight_layout()
+    plt.savefig(out_dir / "pca_loadings_heatmap.png", dpi=150)
+    plt.close()
+    
+    # Print top loadings for user inspection
+    print("\n=== Top PCA Loadings ===")
+    for i in range(n_show):
+        pc_loadings = loadings_df.iloc[:, i]
+        # Sort by absolute value
+        top_indices = pc_loadings.abs().sort_values(ascending=False).head(5).index
+        print(f"PC{i+1} ({exp_var[i]:.1%} var):")
+        for feat in top_indices:
+            val = pc_loadings[feat]
+            print(f"  - {feat}: {val:.3f}")
+    print("========================\n")
+    
+    return pca
+
+
+
 def tsne_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path, perplexity: float = 30.0):
     n_samples = X.shape[0]
     if n_samples < 2:
@@ -311,33 +380,7 @@ def _save_cluster_cards(feats: pd.DataFrame, feature_cols: list, labels: np.ndar
         plt.close()
 
 
-def _save_ridgeline_plots(feats: pd.DataFrame, labels: np.ndarray, out_dir: Path, features=None, label_name: str = "cluster"):
-    df = feats.copy()
-    df[label_name] = labels
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if features is None:
-        features = ["accuracy", "avg_rt", "rt_cv"]
-    for col in features:
-        d = pd.DataFrame({col: df[col], label_name: df[label_name]})
-        g = sns.FacetGrid(
-            d,
-            row=label_name,
-            hue=label_name,
-            aspect=6,
-            height=1.0,
-            palette=sns.color_palette("husl", n_colors=df[label_name].nunique()),
-            sharex=True,
-            sharey=False,
-        )
-        g.map(sns.kdeplot, col, fill=True, alpha=0.8, linewidth=1)
-        g.map(plt.axhline, y=0, lw=1, clip_on=False)
-        g.set(yticks=[], ylabel="")
-        g.set_titles(row_template="{row_name}")
-        g.fig.subplots_adjust(hspace=-0.5)
-        g.fig.suptitle(f"Ridgeline: {col}", y=1.02)
-        plt.tight_layout()
-        g.savefig(out_dir / f"ridgeline_{col}.png", dpi=150)
-        plt.close(g.fig)
+
 
 
 def _compute_effect_sizes(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, label_name: str = "cluster") -> pd.DataFrame:
@@ -374,7 +417,7 @@ def _save_effect_size_heatmap(effect_df: pd.DataFrame, out_path: Path, title: st
     plt.close()
 
 
-def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_path: Path, label_name: str = "cluster", x: str = "accuracy", y: str = "avg_rt"):
+def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_path: Path, label_name: str = "cluster", x: str = "accuracy", y: str = "avg_rt", xlabel: str = "Accuracy", ylabel: str = "Avg RT (s)", title: str = "Accuracy vs Avg RT with cluster ellipses (GMM BIC)"):
     df = feats.copy()
     df[label_name] = labels
     plt.figure(figsize=(8, 6))
@@ -396,9 +439,9 @@ def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_pa
                 e = Ellipse((mx, my), width, height, angle=theta, edgecolor=palette[i], facecolor='none', lw=2)
                 ax.add_patch(e)
         ax.scatter([mx], [my], color=palette[i], s=60, label=str(k), edgecolor='black', linewidth=0.5)
-    ax.set_xlabel("Accuracy")
-    ax.set_ylabel("Avg RT (s)")
-    ax.set_title("Accuracy vs Avg RT with cluster ellipses (GMM BIC)")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
     ax.legend(title="Cluster", bbox_to_anchor=(1.02, 1), loc="upper left")
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -440,20 +483,7 @@ def _save_radar_all_clusters(feats: pd.DataFrame, feature_cols: list, labels: np
     plt.close()
 
 
-def _save_feature_boxplots(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, label_name: str, out_dir: Path):
-    df = feats.copy()
-    df[label_name] = labels
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # Drop constant features (e.g., n_items) from visualization
-    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
-    for col in feature_cols:
-        plt.figure(figsize=(8, 5))
-        sns.boxplot(data=df, x=label_name, y=col, showfliers=False)
-        sns.stripplot(data=df, x=label_name, y=col, size=2, color="black", alpha=0.2)
-        plt.title(f"{col} by {label_name}")
-        plt.tight_layout()
-        plt.savefig(out_dir / f"{col}_by_{label_name}.png", dpi=150)
-        plt.close()
+
 
 
 def _save_parallel_coordinates(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_path: Path, label_name: str = "cluster"):
@@ -1062,6 +1092,12 @@ def main():
 
     Xs, scaler = scale_features(feats, feature_cols)
 
+    # --- NEW: PCA Loadings Analysis ---
+    pca_dir = figures_dir / "gmm" / "BIC" / "pca"
+    analyze_pca_loadings(Xs, feature_cols, pca_dir)
+    # ----------------------------------
+
+
     km_labels, km_best = kmeans_sweep(Xs, k_range=range(2, 16))
     ag_labels, ag_best = agglomerative_sweep(Xs, k_range=range(2, 16))
     gm_labels, gm_best = gmm_sweep(Xs, k_range=range(2, 16))
@@ -1087,8 +1123,9 @@ def main():
     # GMM information-criteria diagnostics (BIC/AIC)
     gm_bic_df, gm_bic_best, gm_aic_best = gmm_bic_aic_grid(Xs, k_range=range(2, 16))
     gm_bic_df.to_csv(diagnostics_dir / "gmm_bic_aic.csv", index=False)
-    _save_line_plot_hue(gm_bic_df, "K", "bic", "covariance_type", "GMM BIC vs K", figures_dir / "gmm" / "gmm_bic_vs_k.png")
-    _save_line_plot_hue(gm_bic_df, "K", "aic", "covariance_type", "GMM AIC vs K", figures_dir / "gmm" / "gmm_aic_vs_k.png")
+    _save_line_plot_hue(gm_bic_df, "K", "bic", "covariance_type", "GMM BIC vs K", figures_dir / "gmm" / "BIC" / "gmm_bic_vs_k.png")
+    _save_line_plot_hue(gm_bic_df, "K", "aic", "covariance_type", "GMM AIC vs K", figures_dir / "gmm" / "AIC" / "gmm_aic_vs_k.png")
+
 
     # Prepare labels for GMM models chosen by best BIC and best AIC
     try:
@@ -1229,14 +1266,15 @@ def main():
                 Xs,
                 gmm_bic_best_labels,
                 f"GMM (best by BIC: k={bic_k}, cov={bic_cov})",
-                figures_dir / "gmm" / "gmm_bic_best_pca.png",
+                figures_dir / "gmm" / "BIC" / "gmm_bic_best_pca.png",
             )
             lda_scatter(
                 Xs,
                 gmm_bic_best_labels,
                 f"LDA (GMM best by BIC: k={bic_k}, cov={bic_cov})",
-                figures_dir / "gmm" / "gmm_bic_best_lda.png",
+                figures_dir / "gmm" / "BIC" / "gmm_bic_best_lda.png",
             )
+
     except Exception:
         pass
     try:
@@ -1247,8 +1285,9 @@ def main():
                 Xs,
                 gmm_aic_best_labels,
                 f"GMM (best by AIC: k={aic_k}, cov={aic_cov})",
-                figures_dir / "gmm" / "gmm_aic_best_pca.png",
+                figures_dir / "gmm" / "AIC" / "gmm_aic_best_pca.png",
             )
+
     except Exception:
         pass
     # t-SNE and UMAP for GMM best-by-BIC clusters
@@ -1260,8 +1299,9 @@ def main():
                 Xs,
                 gmm_bic_best_labels,
                 f"t-SNE (GMM best by BIC: k={bic_k}, cov={bic_cov})",
-                figures_dir / "gmm" / "gmm_bic_best_tsne.png",
+                figures_dir / "gmm" / "BIC" / "gmm_bic_best_tsne.png",
             )
+
     except Exception:
         pass
     try:
@@ -1272,8 +1312,9 @@ def main():
                 Xs,
                 gmm_bic_best_labels,
                 f"UMAP (GMM best by BIC: k={bic_k}, cov={bic_cov})",
-                figures_dir / "gmm" / "gmm_bic_best_umap.png",
+                figures_dir / "gmm" / "BIC" / "gmm_bic_best_umap.png",
             )
+
     except Exception:
         pass
     try:
@@ -1303,8 +1344,9 @@ def main():
             gmm_bic_best_labels,
             "gmm_bic_best_label",
             out_dir / "profiles",
-            figures_dir / "gmm",
+            figures_dir / "gmm" / "BIC",
         )
+
     except Exception:
         pass
 
@@ -1315,8 +1357,9 @@ def main():
             feature_cols,
             gmm_bic_best_labels,
             Xs,
-            figures_dir / "gmm" / "gmm_bic_cluster_summary.png",
+            figures_dir / "gmm" / "BIC" / "gmm_bic_cluster_summary.png",
         )
+
     except Exception:
         pass
 
@@ -1327,33 +1370,41 @@ def main():
             feature_cols,
             "gmm_bic_best_label",
             "Z-mean of technical features by cluster (GMM BIC)",
-            figures_dir / "gmm" / "gmm_bic_feature_zmean_by_cluster.png",
+            figures_dir / "gmm" / "BIC" / "gmm_bic_feature_zmean_by_cluster.png",
         )
+
     except Exception:
         pass
-    try:
-        _save_feature_boxplots(
-            feats,
-            feature_cols,
-            gmm_bic_best_labels,
-            label_name="gmm_bic_best_label",
-            out_dir=figures_dir / "boxplots",
-        )
-    except Exception:
-        pass
+
     
     # Accuracy vs RT with covariance ellipses per cluster
     try:
         _save_accuracy_speed_ellipse(
             feats,
             gmm_bic_best_labels,
-            figures_dir / "gmm" / "gmm_bic_accuracy_vs_rt_ellipses.png",
+            figures_dir / "gmm" / "BIC" / "gmm_bic_accuracy_vs_rt_ellipses.png",
             label_name="gmm_bic_best_label",
             x="accuracy",
             y="avg_rt",
+            xlabel="Accuracy",
+            ylabel="Avg RT (s)",
+            title="Accuracy vs Avg RT with cluster ellipses (GMM BIC)"
+        )
+        # NEW: Plot based on PCA findings (Accuracy vs Var RT)
+        _save_accuracy_speed_ellipse(
+            feats,
+            gmm_bic_best_labels,
+            figures_dir / "gmm" / "BIC" / "gmm_bic_accuracy_vs_var_rt.png",
+            label_name="gmm_bic_best_label",
+            x="accuracy",
+            y="var_rt",
+            xlabel="Accuracy",
+            ylabel="Variance of RT",
+            title="Accuracy vs Variance of RT (GMM BIC)"
         )
     except Exception:
         pass
+
 
     # Cluster cards (top 5 features per cluster with raw means)
     try:
@@ -1361,26 +1412,18 @@ def main():
             feats,
             feature_cols,
             gmm_bic_best_labels,
-            figures_dir / "cluster_cards",
+            figures_dir / "gmm" / "BIC" / "cluster_cards",
             label_name="gmm_bic_best_label",
             top_n=6,
         )
+
     except Exception:
         pass
 
  
 
     # Ridgeline plots for selected features
-    try:
-        _save_ridgeline_plots(
-            feats,
-            gmm_bic_best_labels,
-            figures_dir / "ridgelines",
-            features=["accuracy", "avg_rt", "rt_cv"],
-            label_name="gmm_bic_best_label",
-        )
-    except Exception:
-        pass
+
 
     # t-SNE visualization for the best-overall clustering
     try:
