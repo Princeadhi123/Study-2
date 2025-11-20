@@ -11,7 +11,6 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN, Birch
 from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
-from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.mixture import GaussianMixture
 from sklearn.neighbors import NearestNeighbors
 
@@ -796,48 +795,12 @@ def dbscan_k_distance_plot(
     plt.close()
 
 
-def _dunn_index(X: np.ndarray, labels: np.ndarray) -> float:
-    labels_arr = np.asarray(labels)
-    if labels_arr.shape[0] != X.shape[0]:
-        return np.nan
-    uniq = np.unique(labels_arr)
-    if len(uniq) < 2:
-        return np.nan
-    D = pairwise_distances(X)
-    np.fill_diagonal(D, np.inf)
-    intra = 0.0
-    for c in uniq:
-        idx = np.where(labels_arr == c)[0]
-        if len(idx) <= 1:
-            continue
-        d_within = D[np.ix_(idx, idx)]
-        if d_within.size == 0:
-            continue
-        intra = max(intra, float(np.nanmax(d_within)))
-    if intra <= 0.0 or not np.isfinite(intra):
-        return np.nan
-    inter = np.inf
-    for i, ci in enumerate(uniq):
-        idx_i = np.where(labels_arr == ci)[0]
-        for cj in uniq[i + 1 :]:
-            idx_j = np.where(labels_arr == cj)[0]
-            if len(idx_i) == 0 or len(idx_j) == 0:
-                continue
-            d_between = D[np.ix_(idx_i, idx_j)]
-            if d_between.size == 0:
-                continue
-            inter = min(inter, float(np.nanmin(d_between)))
-    if inter <= 0.0 or not np.isfinite(inter):
-        return np.nan
-    return float(inter / intra)
-
-
 def compute_internal_validity(X: np.ndarray, labels: np.ndarray) -> Dict:
     result = {
         "silhouette": None,
         "davies_bouldin": None,
         "calinski_harabasz": None,
-        "dunn": None,
+        "avg_intra_cluster_distance": None,
     }
     if labels is None:
         return result
@@ -864,8 +827,21 @@ def compute_internal_validity(X: np.ndarray, labels: np.ndarray) -> Dict:
         result["calinski_harabasz"] = float(calinski_harabasz_score(X_use, y_use))
     except Exception:
         pass
+    # Average distance from points to their own cluster centroid (lower is better)
     try:
-        result["dunn"] = float(_dunn_index(X_use, y_use))
+        total_dist = 0.0
+        total_count = 0
+        for c in uniq:
+            idx = np.nonzero(y_use == c)[0]
+            if len(idx) == 0:
+                continue
+            Xc = X_use[idx]
+            centroid = Xc.mean(axis=0)
+            dists = np.linalg.norm(Xc - centroid, axis=1)
+            total_dist += float(dists.sum())
+            total_count += int(len(dists))
+        if total_count > 0:
+            result["avg_intra_cluster_distance"] = float(total_dist / float(total_count))
     except Exception:
         pass
     return result
