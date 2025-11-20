@@ -10,7 +10,8 @@ from sklearn.decomposition import PCA
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN, Birch
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
+from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.mixture import GaussianMixture
 from sklearn.neighbors import NearestNeighbors
 
@@ -795,6 +796,121 @@ def dbscan_k_distance_plot(
     plt.close()
 
 
+def _dunn_index(X: np.ndarray, labels: np.ndarray) -> float:
+    labels_arr = np.asarray(labels)
+    if labels_arr.shape[0] != X.shape[0]:
+        return np.nan
+    uniq = np.unique(labels_arr)
+    if len(uniq) < 2:
+        return np.nan
+    D = pairwise_distances(X)
+    np.fill_diagonal(D, np.inf)
+    intra = 0.0
+    for c in uniq:
+        idx = np.where(labels_arr == c)[0]
+        if len(idx) <= 1:
+            continue
+        d_within = D[np.ix_(idx, idx)]
+        if d_within.size == 0:
+            continue
+        intra = max(intra, float(np.nanmax(d_within)))
+    if intra <= 0.0 or not np.isfinite(intra):
+        return np.nan
+    inter = np.inf
+    for i, ci in enumerate(uniq):
+        idx_i = np.where(labels_arr == ci)[0]
+        for cj in uniq[i + 1 :]:
+            idx_j = np.where(labels_arr == cj)[0]
+            if len(idx_i) == 0 or len(idx_j) == 0:
+                continue
+            d_between = D[np.ix_(idx_i, idx_j)]
+            if d_between.size == 0:
+                continue
+            inter = min(inter, float(np.nanmin(d_between)))
+    if inter <= 0.0 or not np.isfinite(inter):
+        return np.nan
+    return float(inter / intra)
+
+
+def compute_internal_validity(X: np.ndarray, labels: np.ndarray) -> Dict:
+    result = {
+        "silhouette": None,
+        "davies_bouldin": None,
+        "calinski_harabasz": None,
+        "dunn": None,
+    }
+    if labels is None:
+        return result
+    labels_arr = np.asarray(labels)
+    if labels_arr.shape[0] != X.shape[0]:
+        return result
+    mask = labels_arr >= 0
+    if not np.any(mask):
+        return result
+    X_use = X[mask]
+    y_use = labels_arr[mask]
+    uniq = np.unique(y_use)
+    if len(uniq) < 2:
+        return result
+    try:
+        result["silhouette"] = float(silhouette_score(X_use, y_use))
+    except Exception:
+        pass
+    try:
+        result["davies_bouldin"] = float(davies_bouldin_score(X_use, y_use))
+    except Exception:
+        pass
+    try:
+        result["calinski_harabasz"] = float(calinski_harabasz_score(X_use, y_use))
+    except Exception:
+        pass
+    try:
+        result["dunn"] = float(_dunn_index(X_use, y_use))
+    except Exception:
+        pass
+    return result
+
+
+def compute_external_validity(true_labels: np.ndarray, cluster_labels: np.ndarray) -> Dict:
+    result = {
+        "rand_index": None,
+        "jaccard": None,
+    }
+    if true_labels is None or cluster_labels is None:
+        return result
+    y_true = np.asarray(true_labels)
+    y_pred = np.asarray(cluster_labels)
+    if y_true.shape[0] != y_pred.shape[0]:
+        return result
+    mask = y_pred >= 0
+    if not np.any(mask):
+        return result
+    y_true = y_true[mask]
+    y_pred = y_pred[mask]
+    n = y_true.shape[0]
+    if n <= 1:
+        return result
+    ct = pd.crosstab(pd.Series(y_true, name="true"), pd.Series(y_pred, name="pred"))
+    m = ct.to_numpy(dtype=float)
+
+    def _comb2(x: np.ndarray) -> float:
+        return float(((x * (x - 1.0)) / 2.0).sum())
+
+    a = _comb2(m)  # pairs in same cluster in both
+    row_sums = m.sum(axis=1)
+    col_sums = m.sum(axis=0)
+    b = _comb2(row_sums) - a  # same in true, different in pred
+    c = _comb2(col_sums) - a  # same in pred, different in true
+    N = n * (n - 1.0) / 2.0
+    d = N - a - b - c  # different in both
+    if N > 0.0:
+        result["rand_index"] = float((a + d) / N)
+    denom_j = a + b + c
+    if denom_j > 0.0:
+        result["jaccard"] = float(a / denom_j)
+    return result
+
+
 def agglomerative_sweep(X: np.ndarray, k_range=range(2, 11)) -> Tuple[np.ndarray, Dict]:
     best = {"k": None, "sil": -1.0}
     best_labels = None
@@ -1196,6 +1312,86 @@ def main():
             best_overall_algo = algo
             best_overall_labels = labels_arr
             best_overall_params = params or {}
+    internal_rows = []
+
+    def _add_internal_row(name: str, labels_arr, params: Dict | None = None):
+        if labels_arr is None:
+            return
+        metrics = compute_internal_validity(Xs, labels_arr)
+        row = {"algorithm": name}
+        if params:
+            row.update(params)
+        row.update(metrics)
+        internal_rows.append(row)
+
+    _add_internal_row("kmeans", km_labels, {"k": km_best.get("k")})
+    _add_internal_row("agglomerative", ag_labels, {"k": ag_best.get("k")})
+    _add_internal_row(
+        "birch",
+        br_labels,
+        {
+            "k": br_best.get("k"),
+            "threshold": br_best.get("threshold"),
+            "branching_factor": br_best.get("branching_factor"),
+        },
+    )
+    _add_internal_row(
+        "gmm",
+        gm_labels,
+        {
+            "k": gm_best.get("k"),
+            "covariance_type": gm_best.get("covariance_type"),
+        },
+    )
+    _add_internal_row(
+        "dbscan",
+        db_labels,
+        {
+            "eps": db_best.get("eps"),
+            "min_samples": db_best.get("min_samples"),
+            "n_clusters": db_best.get("n_clusters"),
+        },
+    )
+    _add_internal_row(
+        "dbscan_combined",
+        db_labels_comb,
+        {
+            "eps": db_best_comb.get("eps"),
+            "min_samples": db_best_comb.get("min_samples"),
+            "n_clusters": db_best_comb.get("n_clusters"),
+        },
+    )
+    _add_internal_row(
+        "dbscan_selected",
+        db_selected_labels,
+        {
+            "eps": db_selected.get("eps"),
+            "min_samples": db_selected.get("min_samples"),
+            "n_clusters": db_selected.get("n_clusters"),
+        },
+    )
+    _add_internal_row(
+        "gmm_bic_best",
+        gmm_bic_best_labels,
+        {
+            "k": gm_bic_best.get("k"),
+            "covariance_type": gm_bic_best.get("covariance_type"),
+        },
+    )
+    _add_internal_row(
+        "gmm_aic_best",
+        gmm_aic_best_labels,
+        {
+            "k": gm_aic_best.get("k"),
+            "covariance_type": gm_aic_best.get("covariance_type"),
+        },
+    )
+    if best_overall_labels is not None:
+        _add_internal_row("best_overall", best_overall_labels, {"base_algorithm": best_overall_algo})
+
+    if internal_rows:
+        internal_df = pd.DataFrame(internal_rows)
+        internal_df.to_csv(diagnostics_dir / "cluster_internal_validity.csv", index=False)
 
     clusters_dict = {
         "IDCode": feats["IDCode"],
@@ -1215,6 +1411,36 @@ def main():
         clusters_dict["best_overall_label"] = np.full(len(feats), -1)
 
     clusters = pd.DataFrame(clusters_dict)
+
+    if "sex" in df.columns:
+        sex_by_id = df.groupby("IDCode")["sex"].first()
+        true_sex = sex_by_id.reindex(clusters["IDCode"])
+        external_rows = []
+        label_cols = [
+            "kmeans_label",
+            "agglomerative_label",
+            "birch_label",
+            "gmm_label",
+            "gmm_bic_best_label",
+            "gmm_aic_best_label",
+            "dbscan_label",
+            "dbscan_combined_label",
+            "dbscan_selected_label",
+            "best_overall_label",
+        ]
+        for col in label_cols:
+            if col not in clusters.columns:
+                continue
+            metrics = compute_external_validity(true_sex.to_numpy(), clusters[col].to_numpy())
+            row = {
+                "algorithm": col.replace("_label", ""),
+                "label_column": col,
+            }
+            row.update(metrics)
+            external_rows.append(row)
+        if external_rows:
+            external_df = pd.DataFrame(external_rows)
+            external_df.to_csv(diagnostics_dir / "cluster_external_validity.csv", index=False)
 
     feats_out = out_dir / "derived_features.csv"
     clusters_out = out_dir / "student_clusters.csv"
