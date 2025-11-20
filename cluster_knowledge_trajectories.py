@@ -19,6 +19,8 @@ import seaborn as sns
 
 warnings.filterwarnings("ignore")
 
+LEGEND_LOC_UPPER_LEFT = "upper left"
+
 
 def _longest_streak(arr: np.ndarray, value: int = 1) -> int:
     best = 0
@@ -88,6 +90,39 @@ def compute_student_features(df: pd.DataFrame) -> pd.DataFrame:
     feats = df.groupby("IDCode", sort=False).apply(per_student)
     feats.index.name = "IDCode"
     return feats.reset_index()
+
+
+def _cluster_convex_hull(a: np.ndarray) -> np.ndarray | None:
+    """Compute 2D convex hull of points using a monotonic chain algorithm.
+
+    Expects an array of shape (n_samples, 2). Returns an array of hull points
+    in order, or None if a hull cannot be formed (e.g., fewer than 3 points).
+    """
+    pts = np.asarray(a, dtype=float)
+    # Drop NaNs
+    pts = pts[~np.isnan(pts).any(axis=1)]
+    if pts.shape[0] < 3:
+        return None
+    # Sort by x, then y
+    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+
+    def _cross(o, b, c):
+        return (b[0] - o[0]) * (c[1] - o[1]) - (b[1] - o[1]) * (c[0] - o[0])
+
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    hull = np.array(lower[:-1] + upper[:-1])
+    if hull.shape[0] < 3:
+        return None
+    return hull
 
 
 def scale_features(feats: pd.DataFrame, feature_cols: list) -> Tuple[np.ndarray, StandardScaler]:
@@ -351,7 +386,7 @@ def tsne_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path, 
     plt.title(title)
     plt.xlabel("t-SNE 1")
     plt.ylabel("t-SNE 2")
-    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc=LEGEND_LOC_UPPER_LEFT)
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
@@ -399,7 +434,7 @@ def umap_scatter(
     plt.title(title)
     plt.xlabel("UMAP 1")
     plt.ylabel("UMAP 2")
-    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc=LEGEND_LOC_UPPER_LEFT)
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
@@ -440,35 +475,6 @@ def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_pa
     ax = plt.gca()
     uniq = sorted(df[label_name].unique())
     palette = sns.color_palette("husl", n_colors=len(uniq))
-    
-    def _cluster_convex_hull(a):
-        """Compute 2D convex hull of points using a monotonic chain algorithm."""
-        pts = np.asarray(a, dtype=float)
-        # Drop NaNs
-        pts = pts[~np.isnan(pts).any(axis=1)]
-        if pts.shape[0] < 3:
-            return None
-        # Sort by x, then y
-        pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
-
-        def _cross(o, b, c):
-            return (b[0] - o[0]) * (c[1] - o[1]) - (b[1] - o[1]) * (c[0] - o[0])
-
-        lower = []
-        for p in pts:
-            while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
-                lower.pop()
-            lower.append(p)
-        upper = []
-        for p in reversed(pts):
-            while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
-                upper.pop()
-            upper.append(p)
-        hull = np.array(lower[:-1] + upper[:-1])
-        if hull.shape[0] < 3:
-            return None
-        return hull
-
     for i, k in enumerate(uniq):
         sub = df[df[label_name] == k]
         ax.scatter(sub[x], sub[y], s=10, alpha=0.15, color=palette[i])
@@ -486,7 +492,7 @@ def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_pa
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.legend(title="Cluster", bbox_to_anchor=(1.02, 1), loc="upper left")
+    ax.legend(title="Cluster", bbox_to_anchor=(1.02, 1), loc=LEGEND_LOC_UPPER_LEFT)
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=200)
@@ -863,7 +869,7 @@ def pca_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path):
     plt.title(title)
     plt.xlabel("PC1")
     plt.ylabel("PC2")
-    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc=LEGEND_LOC_UPPER_LEFT)
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
@@ -902,7 +908,7 @@ def lda_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path):
     plt.title(title)
     plt.xlabel("LD1")
     plt.ylabel("LD2")
-    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc=LEGEND_LOC_UPPER_LEFT)
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
