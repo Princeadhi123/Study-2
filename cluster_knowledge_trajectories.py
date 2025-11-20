@@ -1,4 +1,3 @@
-import os
 import sys
 import warnings
 import numpy as np
@@ -17,8 +16,6 @@ from sklearn.neighbors import NearestNeighbors
 
 import matplotlib.pyplot as plt
 import seaborn as sns
-from pandas.plotting import parallel_coordinates
-from matplotlib.patches import Ellipse
 
 warnings.filterwarnings("ignore")
 
@@ -272,7 +269,62 @@ def analyze_pca_loadings(X: np.ndarray, feature_names: list, out_dir: Path):
     print("========================\n")
     
     return pca
-
+def analyze_lda_loadings(X: np.ndarray, labels: np.ndarray, feature_names: list, out_dir: Path):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    labels_arr = np.asarray(labels)
+    mask = labels_arr >= 0
+    if not np.any(mask):
+        return None
+    X_use = X[mask]
+    y_use = labels_arr[mask]
+    uniq = np.unique(y_use)
+    if len(uniq) < 2:
+        return None
+    lda = LDA()
+    try:
+        lda.fit(X_use, y_use)
+    except Exception:
+        return None
+    scalings = getattr(lda, "scalings_", None)
+    if scalings is None:
+        return lda
+    scalings = np.asarray(scalings)
+    n_comp = scalings.shape[1]
+    exp_var = getattr(lda, "explained_variance_ratio_", None)
+    if exp_var is not None:
+        exp_var = np.asarray(exp_var)
+        n_comp = min(n_comp, exp_var.shape[0])
+    n_show = min(n_comp, 6)
+    if n_show <= 0:
+        return lda
+    loadings = scalings[:, :n_show]
+    col_names = []
+    for i in range(n_show):
+        if exp_var is not None and i < len(exp_var):
+            col_names.append(f"LD{i+1} ({exp_var[i]:.1%})")
+        else:
+            col_names.append(f"LD{i+1}")
+    loadings_df = pd.DataFrame(loadings, index=feature_names, columns=col_names)
+    plt.figure(figsize=(8, max(6, len(feature_names) * 0.4)))
+    sns.heatmap(loadings_df, annot=True, cmap="RdBu_r", center=0, fmt=".2f")
+    plt.title("LDA Loadings (Feature Contributions to LDs)")
+    plt.tight_layout()
+    plt.savefig(out_dir / "lda_loadings_heatmap.png", dpi=150)
+    plt.close()
+    print("\n=== Top LDA Loadings ===")
+    for i in range(n_show):
+        ld_loadings = loadings_df.iloc[:, i]
+        top_indices = ld_loadings.abs().sort_values(ascending=False).head(5).index
+        if exp_var is not None and i < len(exp_var):
+            ev_str = f"{exp_var[i]:.1%}"
+        else:
+            ev_str = "n/a"
+        print(f"LD{i+1} ({ev_str} discrim.):")
+        for feat in top_indices:
+            val = ld_loadings[feat]
+            print(f"  - {feat}: {val:.3f}")
+    print("========================\n")
+    return lda
 
 
 def tsne_scatter(X: np.ndarray, labels: np.ndarray, title: str, out_path: Path, perplexity: float = 30.0):
@@ -380,64 +432,56 @@ def _save_cluster_cards(feats: pd.DataFrame, feature_cols: list, labels: np.ndar
         plt.close()
 
 
-
-
-
-def _compute_effect_sizes(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, label_name: str = "cluster") -> pd.DataFrame:
-    df = feats.copy()
-    df[label_name] = labels
-    # Drop constant features
-    feature_cols = [c for c in feature_cols if df[c].nunique() > 1]
-    effects = {}
-    for k in sorted(df[label_name].unique()):
-        g = df[df[label_name] == k][feature_cols]
-        r = df[df[label_name] != k][feature_cols]
-        n1, n2 = len(g), len(r)
-        if n1 < 2 or n2 < 2:
-            es = pd.Series({c: np.nan for c in feature_cols}, name=k)
-        else:
-            mu1, mu2 = g.mean(), r.mean()
-            s1, s2 = g.std(ddof=1), r.std(ddof=1)
-            pooled = np.sqrt(((n1 - 1) * (s1 ** 2) + (n2 - 1) * (s2 ** 2)) / max(n1 + n2 - 2, 1))
-            es = (mu1 - mu2) / pooled.replace(0, np.nan)
-            es.name = k
-        effects[k] = es
-    return pd.DataFrame(effects).T
-
-
-def _save_effect_size_heatmap(effect_df: pd.DataFrame, out_path: Path, title: str = "Cohen's d: cluster vs rest"):
-    # Order columns by overall discriminativeness
-    order = effect_df.abs().mean(axis=0).sort_values(ascending=False).index
-    plt.figure(figsize=(1.2 * len(order), 0.6 * max(6, len(effect_df))))
-    sns.heatmap(effect_df[order], cmap="coolwarm", center=0, annot=False, cbar=True)
-    plt.title(title)
-    plt.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150)
-    plt.close()
-
-
 def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_path: Path, label_name: str = "cluster", x: str = "accuracy", y: str = "avg_rt", xlabel: str = "Accuracy", ylabel: str = "Avg RT (s)", title: str = "Accuracy vs Avg RT with cluster ellipses (GMM BIC)"):
     df = feats.copy()
     df[label_name] = labels
-    plt.figure(figsize=(8, 6))
+    # Slightly larger figure for better readability while keeping the same data scale
+    plt.figure(figsize=(10, 7.5))
     ax = plt.gca()
     uniq = sorted(df[label_name].unique())
     palette = sns.color_palette("husl", n_colors=len(uniq))
+    
+    def _cluster_convex_hull(a):
+        """Compute 2D convex hull of points using a monotonic chain algorithm."""
+        pts = np.asarray(a, dtype=float)
+        # Drop NaNs
+        pts = pts[~np.isnan(pts).any(axis=1)]
+        if pts.shape[0] < 3:
+            return None
+        # Sort by x, then y
+        pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+
+        def _cross(o, b, c):
+            return (b[0] - o[0]) * (c[1] - o[1]) - (b[1] - o[1]) * (c[0] - o[0])
+
+        lower = []
+        for p in pts:
+            while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
+                lower.pop()
+            lower.append(p)
+        upper = []
+        for p in reversed(pts):
+            while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
+                upper.pop()
+            upper.append(p)
+        hull = np.array(lower[:-1] + upper[:-1])
+        if hull.shape[0] < 3:
+            return None
+        return hull
+
     for i, k in enumerate(uniq):
         sub = df[df[label_name] == k]
         ax.scatter(sub[x], sub[y], s=10, alpha=0.15, color=palette[i])
         mx, my = sub[x].mean(), sub[y].mean()
-        if len(sub) > 2:
-            cov = np.cov(sub[x], sub[y])
-            if np.isfinite(cov).all():
-                vals, vecs = np.linalg.eigh(cov)
-                order = vals.argsort()[::-1]
-                vals, vecs = vals[order], vecs[:, order]
-                theta = np.degrees(np.arctan2(vecs[1, 0], vecs[0, 0]))
-                width, height = 2 * 1.5 * np.sqrt(np.maximum(vals, 1e-12))
-                e = Ellipse((mx, my), width, height, angle=theta, edgecolor=palette[i], facecolor='none', lw=2)
-                ax.add_patch(e)
+        # Cluster boundary as convex hull in the (x, y) plane
+        try:
+            hull = _cluster_convex_hull(sub[[x, y]].to_numpy())
+            if hull is not None:
+                hx = np.append(hull[:, 0], hull[0, 0])
+                hy = np.append(hull[:, 1], hull[0, 1])
+                ax.plot(hx, hy, color=palette[i], linewidth=2.0)
+        except Exception:
+            pass
         ax.scatter([mx], [my], color=palette[i], s=60, label=str(k), edgecolor='black', linewidth=0.5)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -445,72 +489,7 @@ def _save_accuracy_speed_ellipse(feats: pd.DataFrame, labels: np.ndarray, out_pa
     ax.legend(title="Cluster", bbox_to_anchor=(1.02, 1), loc="upper left")
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150)
-    plt.close()
-
-
-def _save_radar_all_clusters(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_path: Path, label_name: str = "cluster"):
-    df = feats.copy()
-    df[label_name] = labels
-    # Drop constant features (e.g., n_items) from visualization
-    feature_cols = [c for c in feature_cols if (c != "n_items") and (df[c].nunique() > 1)]
-    mu = df[feature_cols].mean()
-    sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
-    z = (df[feature_cols] - mu) / sd
-    zmean = z.join(df[label_name]).groupby(label_name)[feature_cols].mean().sort_index()
-    cats = feature_cols
-    N = len(cats)
-    angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
-    angles += angles[:1]
-    plt.figure(figsize=(9, 7))
-    ax = plt.subplot(111, polar=True)
-    palette = sns.color_palette("husl", n_colors=len(zmean))
-    for i, k in enumerate(zmean.index.tolist()):
-        vals = zmean.loc[k, :].to_numpy().astype(float)
-        vals = np.clip(vals, -3.0, 3.0)
-        vals = vals.tolist() + [vals[0]]
-        ax.plot(angles, vals, color=palette[i], linewidth=2, label=str(k))
-        ax.fill(angles, vals, color=palette[i], alpha=0.08)
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(cats)
-    ax.set_yticks([-3, -1.5, 0, 1.5, 3])
-    ax.set_ylim(-3, 3)
-    ax.set_title("Cluster z-mean radar (GMM BIC)")
-    ax.legend(title="Cluster", bbox_to_anchor=(1.05, 1), loc="upper left")
-    plt.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150)
-    plt.close()
-
-
-
-
-
-def _save_parallel_coordinates(feats: pd.DataFrame, feature_cols: list, labels: np.ndarray, out_path: Path, label_name: str = "cluster"):
-    df = feats.copy()
-    df[label_name] = labels
-    mu = df[feature_cols].mean()
-    sd = df[feature_cols].std(ddof=0).replace(0, np.nan)
-    z = (df[feature_cols] - mu) / sd
-    plot_df = z.copy()
-    plot_df[label_name] = df[label_name].astype(str)
-    plt.figure(figsize=(12, 6))
-    ax = plt.gca()
-    colors = sns.color_palette("husl", n_colors=len(plot_df[label_name].unique()))
-    parallel_coordinates(plot_df, class_column=label_name, cols=feature_cols, ax=ax, color=colors)
-    for ln in ax.lines:
-        ln.set_alpha(0.12)
-    # Overlay cluster medians for clarity
-    med = plot_df.groupby(label_name)[feature_cols].median().sort_index()
-    palette = sns.color_palette("husl", n_colors=len(med))
-    angles = np.arange(len(feature_cols))
-    for i, (k, row) in enumerate(med.iterrows()):
-        ax.plot(angles, row.values, color=palette[i], linewidth=2.5)
-    ax.set_title("Parallel coordinates (z-scored), with cluster medians")
-    ax.legend(loc="upper right", bbox_to_anchor=(1.15, 1))
-    plt.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150)
+    plt.savefig(out_path, dpi=200)
     plt.close()
 
 
@@ -1090,6 +1069,13 @@ def main():
     except Exception:
         gmm_bic_best_labels = np.full(len(Xs), -1)
 
+    # LDA loadings based on GMM best-by-BIC clusters
+    try:
+        lda_dir = figures_dir / "gmm" / "BIC" / "lda"
+        analyze_lda_loadings(Xs, gmm_bic_best_labels, feature_cols, lda_dir)
+    except Exception:
+        pass
+
     try:
         _aic_k = gm_aic_best.get("k")
         _aic_cov = gm_aic_best.get("covariance_type")
@@ -1338,6 +1324,18 @@ def main():
             xlabel="Accuracy",
             ylabel="Variance of RT",
             title="Accuracy vs Variance of RT (GMM BIC)"
+        )
+        # NEW: Plot based on LDA loadings (Total correct vs Var RT)
+        _save_accuracy_speed_ellipse(
+            feats,
+            gmm_bic_best_labels,
+            figures_dir / "gmm" / "BIC" / "gmm_bic_total_correct_vs_var_rt.png",
+            label_name="gmm_bic_best_label",
+            x="total_correct",
+            y="var_rt",
+            xlabel="Total correct",
+            ylabel="Variance of RT",
+            title="Total correct vs Variance of RT (GMM BIC)"
         )
     except Exception:
         pass
