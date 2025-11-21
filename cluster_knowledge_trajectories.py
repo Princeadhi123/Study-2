@@ -1329,12 +1329,13 @@ def write_report(report_path: Path, summary: Dict):
 
 
 def main():
+    base_dir = Path(__file__).parent
     if len(sys.argv) > 1:
         data_path = Path(sys.argv[1])
+        out_dir = data_path.parent
     else:
-        data_path = Path(__file__).parent / "DigiArvi_25_itemwise.csv"
-
-    out_dir = data_path.parent
+        data_path = base_dir / "data" / "DigiArvi_25_itemwise.csv"
+        out_dir = base_dir
     figures_dir = out_dir / "figures"
 
     df = pd.read_csv(data_path)
@@ -1369,16 +1370,18 @@ def main():
 
     diagnostics_dir = out_dir / "diagnostics"
     diagnostics_dir.mkdir(parents=True, exist_ok=True)
+    model_results_dir = diagnostics_dir / "model results"
+    model_results_dir.mkdir(parents=True, exist_ok=True)
 
     # Per-K silhouette curves (CSV + plots)
     km_curve = _silhouette_curve_kmeans(Xs, k_range=range(2, 16))
     ag_curve = _silhouette_curve_agglomerative(Xs, k_range=range(2, 16))
     gm_curve = _silhouette_curve_gmm(Xs, k_range=range(2, 16))
     br_curve = _silhouette_curve_birch(Xs, k_range=range(2, 16))
-    km_curve.to_csv(diagnostics_dir / "kmeans_silhouette_vs_k.csv", index=False)
-    ag_curve.to_csv(diagnostics_dir / "agglomerative_silhouette_vs_k.csv", index=False)
-    gm_curve.to_csv(diagnostics_dir / "gmm_silhouette_vs_k.csv", index=False)
-    br_curve.to_csv(diagnostics_dir / "birch_silhouette_vs_k.csv", index=False)
+    km_curve.to_csv(model_results_dir / "kmeans_silhouette_vs_k.csv", index=False)
+    ag_curve.to_csv(model_results_dir / "agglomerative_silhouette_vs_k.csv", index=False)
+    gm_curve.to_csv(model_results_dir / "gmm_silhouette_vs_k.csv", index=False)
+    br_curve.to_csv(model_results_dir / "birch_silhouette_vs_k.csv", index=False)
     _save_line_plot(km_curve, "K", "silhouette", "KMeans silhouette vs K", figures_dir / "kmeans" / "kmeans_silhouette_vs_k.png")
     _save_line_plot(ag_curve, "K", "silhouette", "Agglomerative silhouette vs K", figures_dir / "agglomerative" / "agglomerative_silhouette_vs_k.png")
     _save_line_plot(gm_curve, "K", "silhouette", "GMM silhouette vs K (best cov)", figures_dir / "gmm" / "gmm_silhouette_vs_k.png")
@@ -1386,7 +1389,7 @@ def main():
 
     # GMM information-criteria diagnostics (BIC/AIC)
     gm_bic_df, gm_bic_best, gm_aic_best = gmm_bic_aic_grid(Xs, k_range=range(2, 16))
-    gm_bic_df.to_csv(diagnostics_dir / "gmm_bic_aic.csv", index=False)
+    gm_bic_df.to_csv(model_results_dir / "gmm_bic_aic.csv", index=False)
     _save_line_plot_hue(gm_bic_df, "K", "bic", "covariance_type", "GMM BIC vs K", figures_dir / "gmm" / "BIC" / "gmm_bic_vs_k.png")
     _save_line_plot_hue(gm_bic_df, "K", "aic", "covariance_type", "GMM AIC vs K", figures_dir / "gmm" / "AIC" / "gmm_aic_vs_k.png")
 
@@ -1427,7 +1430,7 @@ def main():
     db_diag_df, db_labels_sil, db_best, db_labels_comb, db_best_comb = dbscan_grid_diagnostics(
         Xs, eps_values=np.linspace(0.5, 3.0, 11), min_samples=5
     )
-    db_diag_df.to_csv(diagnostics_dir / "dbscan_sweep.csv", index=False)
+    db_diag_df.to_csv(model_results_dir / "dbscan_sweep.csv", index=False)
     elbow_eps = estimate_dbscan_elbow_eps(Xs, min_samples=5)
     # Expanded DBSCAN multi-parameter grid and auto-selection
     eps_values_expanded = np.linspace(0.3, 4.0, 38)
@@ -1435,7 +1438,7 @@ def main():
     db_multi_df, db_multi_best_sil, db_multi_best_comb = dbscan_multi_grid_diagnostics(
         Xs, eps_values=eps_values_expanded, min_samples_list=min_samples_list
     )
-    db_multi_df.to_csv(diagnostics_dir / "dbscan_multi_sweep.csv", index=False)
+    db_multi_df.to_csv(model_results_dir / "dbscan_multi_sweep.csv", index=False)
     _save_line_plot_hue(db_multi_df, "eps", "silhouette_core", "min_samples", "DBSCAN silhouette_core vs eps", figures_dir / "dbscan" / "dbscan_silhouette_vs_eps.png")
     _save_line_plot_hue(db_multi_df, "eps", "combined", "min_samples", "DBSCAN combined vs eps", figures_dir / "dbscan" / "dbscan_combined_vs_eps.png")
     _save_line_plot_hue(db_multi_df, "eps", "noise_rate", "min_samples", "DBSCAN noise_rate vs eps", figures_dir / "dbscan" / "dbscan_noise_vs_eps.png")
@@ -1559,7 +1562,9 @@ def main():
 
     if internal_rows:
         internal_df = pd.DataFrame(internal_rows)
-        internal_df.to_csv(diagnostics_dir / "cluster_internal_validity.csv", index=False)
+        validity_diag_dir = diagnostics_dir / "cluster validity"
+        validity_diag_dir.mkdir(parents=True, exist_ok=True)
+        internal_df.to_csv(validity_diag_dir / "cluster_internal_validity.csv", index=False)
         _plot_internal_validity(internal_df, figures_dir / "cluster validity")
 
     clusters_dict = {
@@ -1609,12 +1614,20 @@ def main():
             external_rows.append(row)
         if external_rows:
             external_df = pd.DataFrame(external_rows)
-            external_df.to_csv(diagnostics_dir / "cluster_external_validity.csv", index=False)
+            validity_diag_dir = diagnostics_dir / "cluster validity"
+            validity_diag_dir.mkdir(parents=True, exist_ok=True)
+            external_df.to_csv(validity_diag_dir / "cluster_external_validity.csv", index=False)
             _plot_external_validity(external_df, figures_dir / "cluster validity")
 
-    feats_out = out_dir / "derived_features.csv"
-    clusters_out = out_dir / "student_clusters.csv"
-    report_out = out_dir / "_clustering_report.txt"
+    features_dir = diagnostics_dir / "cluster input features"
+    features_dir.mkdir(parents=True, exist_ok=True)
+    feats_out = features_dir / "derived_features.csv"
+
+    cluster_labels_dir = diagnostics_dir / "student cluster labels"
+    cluster_labels_dir.mkdir(parents=True, exist_ok=True)
+    clusters_out = cluster_labels_dir / "student_clusters.csv"
+
+    report_out = diagnostics_dir / "_clustering_report.txt"
 
     feats.to_csv(feats_out, index=False)
     clusters.to_csv(clusters_out, index=False)
@@ -1726,7 +1739,7 @@ def main():
             feature_cols,
             gmm_bic_best_labels,
             "gmm_bic_best_label",
-            out_dir / "profiles",
+            diagnostics_dir / "gmm profiles",
             figures_dir / "gmm" / "BIC",
         )
 
