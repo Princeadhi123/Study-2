@@ -70,10 +70,6 @@ def _zmean(df: pd.DataFrame) -> pd.DataFrame:
 def _save_zmean_heatmap(df: pd.DataFrame, cluster_col: str, value_cols: list, out_path: Path, title: str):
     z = _zmean(df[value_cols])
     mat = z.join(df[cluster_col]).groupby(cluster_col)[value_cols].mean().sort_index()
-    # Order columns by discriminativeness (avg |z| across clusters)
-    if not mat.empty:
-        col_order = mat.abs().mean(axis=0).sort_values(ascending=False).index.tolist()
-        mat = mat[col_order]
     vmax = float(np.nanmax(np.abs(mat.values))) if mat.size else 0.0
     vmax = max(1.0, min(3.0, vmax))
     vmin = -vmax
@@ -94,7 +90,7 @@ def _save_zmean_heatmap(df: pd.DataFrame, cluster_col: str, value_cols: list, ou
         linewidths=0.6,
         linecolor="#f0f0f0",
     )
-    ax.set_xlabel("Subject / Total")
+    ax.set_xlabel("Subject area")
     ax.set_ylabel("Cluster")
     ax.set_xticklabels(ax.get_xticklabels(), rotation=30, ha="right")
     # Add cluster counts to y labels
@@ -158,28 +154,6 @@ def _save_correlation_tables(
 ):
     out_profiles.mkdir(parents=True, exist_ok=True)
     out_figs.mkdir(parents=True, exist_ok=True)
-    if subj_cols:
-        clusters_sorted = sorted(dfa[cluster_col].unique(), key=lambda x: int(x))
-        corr_rows = {}
-        for k in clusters_sorted:
-            ind = (dfa[cluster_col] == k).astype(int)
-            ser = dfa[subj_cols].apply(lambda col: col.corr(ind))
-            ser.name = str(k)
-            corr_rows[str(k)] = ser
-        corr_df = pd.DataFrame(corr_rows)
-        corr_df.to_csv(out_profiles / "corr_subjects_vs_cluster.csv")
-
-    if total_col and derived_path.exists():
-        dfd = pd.read_csv(derived_path)
-        id_derived = "IDCode" if "IDCode" in dfd.columns else _detect_id_col(dfd)
-        dfm = dfa[[id_col, total_col]].merge(dfd, left_on=id_col, right_on=id_derived, how="inner")
-        exclude = {id_derived}
-        feat_cols = [c for c in dfm.columns if c not in exclude | {id_col, total_col}]
-        pearson = dfm[feat_cols].corrwith(dfm[total_col], method="pearson").to_frame("pearson")
-        spearman = dfm[feat_cols].corrwith(dfm[total_col], method="spearman").to_frame("spearman")
-        corr2 = pearson.join(spearman)
-        corr2.index.name = "feature"
-        corr2.sort_values("pearson", ascending=False).to_csv(out_profiles / "corr_total_vs_features.csv")
 
 def run(marks_path: Path):
     base = Path(__file__).parent
@@ -212,15 +186,14 @@ def run(marks_path: Path):
 
     dfa = dfx.merge(dfc[[id_clusters, cluster_col]].rename(columns={id_clusters: id_excel}), on=id_excel, how="inner")
 
-    out_profiles = base / "diagnostics" / "gmm profiles"
-    out_figs = base / "figures" / "marks_by_cluster"
+    out_profiles = base / "diagnostics" / "gmm profiles BIC"
+    out_figs = base / "figures" / "subjectwise by cluster"
 
-    dfa.to_csv(base / "marks_with_clusters.csv", index=False)
+    cluster_input_features_dir = base / "diagnostics" / "cluster input features"
+    cluster_input_features_dir.mkdir(parents=True, exist_ok=True)
+    dfa.to_csv(cluster_input_features_dir / "marks_with_clusters.csv", index=False)
 
-    value_cols = subj_cols + ([total_col] if total_col else [])
-
-    stats = dfa.groupby(cluster_col)[value_cols].agg(["count", "mean", "std", "median"]).sort_index()
-    stats.to_csv(out_profiles / "marks_by_cluster_stats.csv")
+    value_cols = subj_cols
 
     _save_zmean_heatmap(dfa, cluster_col, value_cols, out_figs / "subject_zmean_by_cluster.png", "Subject-wise z-mean by cluster")
 

@@ -1739,7 +1739,7 @@ def main():
             feature_cols,
             gmm_bic_best_labels,
             "gmm_bic_best_label",
-            diagnostics_dir / "gmm profiles",
+            diagnostics_dir / "gmm profiles BIC",
             figures_dir / "gmm" / "BIC",
         )
 
