@@ -142,23 +142,10 @@ def _save_subject_radar_all_clusters(df: pd.DataFrame, cluster_col: str, subj_co
     plt.savefig(out_path, dpi=150)
     plt.close()
 
-def _save_correlation_tables(
-    dfa: pd.DataFrame,
-    id_col: str,
-    cluster_col: str,
-    subj_cols: list,
-    total_col: str | None,
-    derived_path: Path,
-    out_profiles: Path,
-    out_figs: Path,
-):
-    out_profiles.mkdir(parents=True, exist_ok=True)
-    out_figs.mkdir(parents=True, exist_ok=True)
 
 def run(marks_path: Path):
     base = Path(__file__).parent
     clusters_path = base / "diagnostics" / "student cluster labels" / "student_clusters.csv"
-    derived_path = base / "diagnostics" / "cluster input features" / "derived_features.csv"
     dfc = pd.read_csv(clusters_path)
     cluster_col = "gmm_bic_best_label"
     if cluster_col not in dfc.columns:
@@ -186,7 +173,6 @@ def run(marks_path: Path):
 
     dfa = dfx.merge(dfc[[id_clusters, cluster_col]].rename(columns={id_clusters: id_excel}), on=id_excel, how="inner")
 
-    out_profiles = base / "diagnostics" / "gmm profiles BIC"
     out_figs = base / "figures" / "subjectwise by cluster"
 
     cluster_input_features_dir = base / "diagnostics" / "cluster input features"
@@ -199,17 +185,6 @@ def run(marks_path: Path):
 
     if subj_cols:
         _save_subject_radar_all_clusters(dfa, cluster_col, subj_cols, out_figs / "subject_radar_all_clusters.png")
-
-    _save_correlation_tables(
-        dfa=dfa,
-        id_col=id_excel,
-        cluster_col=cluster_col,
-        subj_cols=subj_cols,
-        total_col=total_col,
-        derived_path=derived_path,
-        out_profiles=out_profiles,
-        out_figs=out_figs,
-    )
 
 
 if __name__ == "__main__":
