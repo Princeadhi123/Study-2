@@ -887,6 +887,198 @@ def compute_external_validity(true_labels: np.ndarray, cluster_labels: np.ndarra
     return result
 
 
+def _plot_internal_validity(internal_df: pd.DataFrame, out_dir: Path):
+    if internal_df is None or internal_df.empty:
+        return
+    # Exclude algorithms that should not appear in the summary plots
+    exclude_algs = {"dbscan_combined", "best_overall"}
+    df_plot = internal_df[~internal_df["algorithm"].isin(exclude_algs)].copy()
+    if df_plot.empty:
+        return
+    # Use a fixed algorithm order consistent with external validity results
+    desired_order = [
+        "kmeans",
+        "agglomerative",
+        "birch",
+        "gmm",
+        "gmm_bic_best",
+        "gmm_aic_best",
+        "dbscan",
+        "dbscan_selected",
+    ]
+    algorithms = [a for a in desired_order if a in df_plot["algorithm"].values]
+    if not algorithms:
+        return
+    metrics = [
+        ("silhouette", "Silhouette (higher better)"),
+        ("davies_bouldin", "Davies-Bouldin (lower better)"),
+        ("calinski_harabasz", "Calinski-Harabasz (higher better)"),
+        ("avg_intra_cluster_distance", "Avg intra-cluster distance (lower better)"),
+    ]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plt.figure(figsize=(12.0, 8.0))
+    for i, (col, title) in enumerate(metrics, start=1):
+        if col not in df_plot.columns:
+            continue
+        plt.subplot(2, 2, i)
+        vals_series = df_plot.set_index("algorithm")[col]
+        vals = [vals_series.get(a, np.nan) for a in algorithms]
+        sns.barplot(x=algorithms, y=vals)
+        plt.xticks(rotation=45, ha="right")
+        plt.ylabel(col)
+        plt.title(title)
+    plt.tight_layout()
+    plt.savefig(out_dir / "internal_validity_summary.png", dpi=150)
+    plt.close()
+    _internal_validity_heatmap(internal_df, out_dir)
+
+
+def _plot_external_validity(external_df: pd.DataFrame, out_dir: Path):
+    if external_df is None or external_df.empty:
+        return
+    # Exclude algorithms that should not appear in the summary plots
+    exclude_algs = {"dbscan_combined", "best_overall"}
+    df_plot = external_df[~external_df["algorithm"].isin(exclude_algs)].copy()
+    if df_plot.empty:
+        return
+    out_dir.mkdir(parents=True, exist_ok=True)
+    algs = df_plot["algorithm"].astype(str).tolist()
+    plt.figure(figsize=(10.0, 5.0))
+    # Rand index (higher is better)
+    plt.subplot(1, 2, 1)
+    if "rand_index" in df_plot.columns:
+        sns.barplot(x=algs, y=df_plot["rand_index"])
+        plt.xticks(rotation=45, ha="right")
+        plt.ylabel("Rand index")
+        plt.title("External validity: Rand index vs sex (higher better)")
+    # Jaccard (higher is better)
+    plt.subplot(1, 2, 2)
+    if "jaccard" in df_plot.columns:
+        sns.barplot(x=algs, y=df_plot["jaccard"])
+        plt.xticks(rotation=45, ha="right")
+        plt.ylabel("Jaccard coefficient")
+        plt.title("External validity: Jaccard vs sex (higher better)")
+    plt.tight_layout()
+    plt.savefig(out_dir / "external_validity_summary.png", dpi=150)
+    plt.close()
+    _external_validity_heatmap(external_df, out_dir)
+
+
+def _normalize_metric(series: pd.Series, higher_is_better: bool) -> pd.Series:
+    s = pd.to_numeric(series, errors="coerce")
+    if not higher_is_better:
+        s = -s
+    s_min = s.min()
+    s_max = s.max()
+    if not np.isfinite(s_min) or not np.isfinite(s_max) or s_max <= s_min:
+        return pd.Series(np.full(len(s), np.nan), index=series.index)
+    return (s - s_min) / (s_max - s_min)
+
+
+def _internal_validity_heatmap(internal_df: pd.DataFrame, out_dir: Path):
+    if internal_df is None or internal_df.empty:
+        return
+    exclude_algs = {"dbscan_combined", "best_overall"}
+    df_plot = internal_df[~internal_df["algorithm"].isin(exclude_algs)].copy()
+    if df_plot.empty:
+        return
+    desired_order = [
+        "kmeans",
+        "agglomerative",
+        "birch",
+        "gmm",
+        "gmm_bic_best",
+        "gmm_aic_best",
+        "dbscan",
+        "dbscan_selected",
+    ]
+    algs = [a for a in desired_order if a in df_plot["algorithm"].values]
+    if not algs:
+        return
+    df_plot = df_plot.set_index("algorithm").loc[algs]
+    metrics_info = [
+        ("silhouette", True, "Silhouette"),
+        ("davies_bouldin", False, "Davies-Bouldin"),
+        ("calinski_harabasz", True, "Calinski-Harabasz"),
+        ("avg_intra_cluster_distance", False, "Avg intra-cluster distance"),
+    ]
+    data = {}
+    for col, higher_better, label in metrics_info:
+        if col in df_plot.columns:
+            data[label] = _normalize_metric(df_plot[col], higher_better)
+    if not data:
+        return
+    mat = pd.DataFrame(data, index=df_plot.index)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plt.figure(figsize=(10.0, 6.0))
+    sns.heatmap(
+        mat,
+        annot=True,
+        fmt=".2f",
+        cmap="YlGnBu",
+        vmin=0.0,
+        vmax=1.0,
+        cbar_kws={"label": "Normalized score"},
+    )
+    plt.ylabel("Algorithm")
+    plt.xlabel("Internal validity metric")
+    plt.title("Internal cluster validity (normalized)")
+    plt.tight_layout()
+    plt.savefig(out_dir / "internal_validity_heatmap.png", dpi=150)
+    plt.close()
+
+
+def _external_validity_heatmap(external_df: pd.DataFrame, out_dir: Path):
+    if external_df is None or external_df.empty:
+        return
+    exclude_algs = {"dbscan_combined", "best_overall"}
+    df_plot = external_df[~external_df["algorithm"].isin(exclude_algs)].copy()
+    if df_plot.empty:
+        return
+    desired_order = [
+        "kmeans",
+        "agglomerative",
+        "birch",
+        "gmm",
+        "gmm_bic_best",
+        "gmm_aic_best",
+        "dbscan",
+        "dbscan_selected",
+    ]
+    algs = [a for a in desired_order if a in df_plot["algorithm"].values]
+    if not algs:
+        return
+    df_plot = df_plot.set_index("algorithm").loc[algs]
+    metrics_info = [
+        ("rand_index", True, "Rand index"),
+        ("jaccard", True, "Jaccard"),
+    ]
+    data = {}
+    for col, higher_better, label in metrics_info:
+        if col in df_plot.columns:
+            data[label] = _normalize_metric(df_plot[col], higher_better)
+    if not data:
+        return
+    mat = pd.DataFrame(data, index=df_plot.index)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plt.figure(figsize=(6.5, 6.0))
+    sns.heatmap(
+        mat,
+        annot=True,
+        fmt=".2f",
+        cmap="YlGnBu",
+        vmin=0.0,
+        vmax=1.0,
+        cbar_kws={"label": "Normalized score"},
+    )
+    plt.ylabel("Algorithm")
+    plt.xlabel("External validity metric")
+    plt.title("External cluster validity (normalized)")
+    plt.tight_layout()
+    plt.savefig(out_dir / "external_validity_heatmap.png", dpi=150)
+    plt.close()
+
+
 def agglomerative_sweep(X: np.ndarray, k_range=range(2, 11)) -> Tuple[np.ndarray, Dict]:
     best = {"k": None, "sil": -1.0}
     best_labels = None
@@ -1368,6 +1560,7 @@ def main():
     if internal_rows:
         internal_df = pd.DataFrame(internal_rows)
         internal_df.to_csv(diagnostics_dir / "cluster_internal_validity.csv", index=False)
+        _plot_internal_validity(internal_df, figures_dir / "cluster validity")
 
     clusters_dict = {
         "IDCode": feats["IDCode"],
@@ -1417,6 +1610,7 @@ def main():
         if external_rows:
             external_df = pd.DataFrame(external_rows)
             external_df.to_csv(diagnostics_dir / "cluster_external_validity.csv", index=False)
+            _plot_external_validity(external_df, figures_dir / "cluster validity")
 
     feats_out = out_dir / "derived_features.csv"
     clusters_out = out_dir / "student_clusters.csv"
